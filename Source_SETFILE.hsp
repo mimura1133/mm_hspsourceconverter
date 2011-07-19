@@ -1,0 +1,373 @@
+	//
+	//	Mimura Software ソースコンバータ２
+	//				開発ソース
+	//		定義ファイル操作モジュール
+	
+	#module SETUP_WRITE_LOAD
+
+	#deffunc sysdirset
+	atsysdir=dirinfo(0)
+	return
+
+	#deffunc cdexedir
+	chdir atsysdir
+	return
+	
+	#deffunc cdsysdir
+	//
+	// 一緒になっているものを抜き出してあります。
+	//
+	chdir atsysdir
+	dirlist folder,"Program Data",5
+	if stat=0:mkdir "Program Data"
+	chdir "Program Data"
+	dirlist folder,"Source Converter 2"
+	if stat=0:mkdir "Source Converter 2"
+	chdir "Source Converter 2"
+	return dirinfo(0)
+
+	#deffunc cpsload str name,var buf
+	//
+	// CPS (ComPonent Settings) Load
+	// コンポーネント名を指定すると、それの設定ファイルを読み出します。
+	//
+	// *_data.dat を読み出すだけ。　利便上まとめてある。
+	//
+	exist ""+name+"_data.dat"
+	if strsize=-1:return
+	notesel buf
+	noteload ""+name+"_data.dat"
+	notedel 0
+	return ""+dirinfo(0)+"\\"+name+"_data.dat"
+	
+	#deffunc cpssave str name,str buf_,int overwrite,local buf
+	//
+	// CPS (ComPonent Settings) Save
+	// コンポーネント名を指定すると、それの設定ファイルを書き出します。
+	// 
+	// overwrite - 上書き 1 だと許可される。
+	//
+	// *_data.dat を書き出すだけ。　利便上まとめてある。
+	//
+	exist ""+name+"_data.dat"
+	if (overwrite=1)&(strsize!-1):delete ""+name+"_data.dat"
+	exist ""+name+"_data.dat"
+	buf=buf_
+	buf="[Mimura Software Source Converter 2 "+name+" Data]\n"+buf
+	if (strsize=-1):bsave ""+name+"_data.dat",buf
+	return ""+dirinfo(0)+"\\"+name+"_data.dat"
+	
+	sdim setdata,640
+	
+	#deffunc m_lslocal str setdata_
+	//
+	// このモジュールの初期化。
+	//
+	setdata=setdata_
+	return
+	
+	#defcfunc M_load str function,local loadpoint
+	//
+	// M_LOAD
+	//
+	// result   - 取得したデータ
+	// function - 取得する項目 
+	//
+	loadpoint=instr(setdata,0,function+"=")+strlen(function)+1
+	return strmid(setdata,loadpoint,instr(setdata,loadpoint,"\n"))
+
+	#deffunc M_save str function,str writedata,local savepoint,local temp,local look
+	//
+	// M_SAVE
+	//
+	// writedata - 書き込むデータ
+	// function  - 書き込まれる項目
+	//
+	savepoint=instr(setdata,0,function+"=")+strlen(function)+1
+	notesel setdata
+	look=-1
+	repeat noteinfo(0)
+	noteget temp,cnt
+	if strmid(temp,0,instr(temp,0,"="))=function:noteadd ""+function+"="+writedata,cnt,1:look=cnt:break
+	loop
+	if look=-1:noteadd ""+function+"="+writedata
+	return
+
+	#deffunc M_fsave local mainfd
+	mainfd=dirinfo(0)
+	cdsysdir
+	bsave "Main_Data.dat",setdata
+	chdir mainfd
+	return
+	
+	#global
+	
+	#module SETUP_INIT
+	#deffunc Tcheck int overwrite,local cdata,local wshmd,local notedat,local ldata,local adata,local folder,local mainfd,local regsize,local regdat,local mdata,local reghwnd
+	//
+	// 用途：
+	// 定義ファイルの有無の検査、および修復を実行する命令
+	// 
+	// 引数：
+	// overwrite = 0 : ファイル検査、修復
+	// overwrite = 1 : 設定データの初期化
+	//
+	// オプション：
+	// mdata : プログラム設定データ - Maindata.dat
+	// cdata : 命令修正に関する定義データ - Command_data.dat 
+	// ldata : ラベル編集に関する定義データ - Label_data.dat
+	// adata : 指定ソースの頭に挿入するデータ - Insert_data.dat
+	// wshmd : WSH Module Data - wshm_data.dat
+	//
+	mainfd=dirinfo(0)
+	cdsysdir
+	//
+	// MDATA FORMAT
+	//
+	// 一行目 - ヘッダデータ
+	//
+	//　以下 ini ファイルと似たファイルフォーマットを使用。
+	//
+
+	notesel mdata
+	exist "Main_data.dat"
+	if strsize!-1:noteload "main_data.dat"
+	if overwrite=1:mdata=""
+	if noteinfo(0)<1:noteadd "[Mimura Software Source Converter 2 Main Data]"
+	if instr(mdata,0,"FirstMode=")=-1:noteadd "FirstMode=0"					// ファイル・テキスト　変換モードセレクト
+	if instr(mdata,0,"BootMode=")=-1:noteadd "BootMode=1"					// ウイザード・ノーマル　セレクト
+	if instr(mdata,0,"CommandConvert=")=-1:noteadd "CommandConvert=1"		// 命令変換の指定
+	if instr(mdata,0,"LabelConvert=")=-1:noteadd "LabelConvert=1"			// ラベル修正の指定
+	if instr(mdata,0,"FuncConvert=")=-1:noteadd "FuncConvert=1"				// FUNC 修正
+	if instr(mdata,0,"ExpressionConvert=")=-1:noteadd "ExpressionConvert=1"	// 数式変換
+	if instr(mdata,0,"IncludeConvert=")=-1:noteadd "IncludeConvert=1"		// #include / #Addional 内部検索。
+	if instr(mdata,0,"mrefTodeffunc=")=-1:noteadd "mrefTodeffunc=1"	// #deffunc, mref 文法修正
+	if instr(mdata,0,"Insertundef=")=-1:noteadd "Insertundef=1"		// #deffunc の前に #undef を挿入
+	if instr(mdata,0,"UseVBScript=")=-1:noteadd "UseVBScript=0"
+	if instr(mdata,0,"RunScriptFirst=")=-1:noteadd "RunScriptFirst=0"
+	if instr(mdata,0,"RunScriptLast=")=-1:noteadd "RunScriptLast=0"
+	if instr(mdata,0,"InsertModule=")=-1:noteadd "InsertModule=0"			// 独自モジュール挿入
+	if instr(mdata,0,"ConvertSpeed=")=-1:noteadd "ConvertSpeed=1"			// スピード設定
+	if instr(mdata,0,"Overwrite=")=-1:noteadd "Overwrite=0"					// 上書き設定
+	if instr(mdata,0,"AdvancedEditor=")=-1:{
+		// 設定エディタをiniの設定エディタと同じ設定を使う
+		// 　レジストリに直接アクセスして取得する
+		RegOpenKeyEx HKEY_CLASSES_ROOT,".ini",0,KEY_READ,varptr(reghwnd)
+		if stat=0:{
+			RegQueryValueEx reghwnd,0,0,0,0,varptr(regsize)
+				// あるなら値を取得。
+			if stat=0:sdim regdat,regsize:RegQueryValueEx reghwnd,0,0,0,varptr(regdat),varptr(regsize)
+			RegCloseKey reghwnd
+			RegOpenKeyEx HKEY_CLASSES_ROOT,regdat+"\\shell\\open\\command",0,KEY_READ,varptr(reghwnd)
+			if stat=0:{
+				RegQueryValueEx reghwnd,0,0,0,0,varptr(regsize)
+					// あるなら値を取得。
+				if stat=0:sdim notedat,regsize:RegQueryValueEx reghwnd,0,0,0,varptr(notedat),varptr(regsize)
+				}
+			RegCloseKey reghwnd
+			noteadd "AdvancedEditor="+notedat
+		}
+	}
+	if instr(mdata,0,"HSPScriptEditor=")=-1:{
+		// コード変換を行った後に開くファイルを、.hsp から直接取得。
+		// 　レジストリに直接アクセスして取得する
+		RegOpenKeyEx HKEY_CLASSES_ROOT,".hsp",0,KEY_READ,varptr(reghwnd)
+		if stat=0:{
+			RegQueryValueEx reghwnd,0,0,0,0,varptr(regsize)
+				// あるなら値を取得。
+			if stat=0:sdim regdat,regsize:RegQueryValueEx reghwnd,0,0,0,varptr(regdat),varptr(regsize)
+			RegCloseKey reghwnd
+			RegOpenKeyEx HKEY_CLASSES_ROOT,regdat+"\\shell\\open\\command",0,KEY_READ,varptr(reghwnd)
+			regdat=""
+			if stat=0:{
+				RegQueryValueEx reghwnd,0,0,0,0,varptr(regsize)
+					// あるなら値を取得。
+				if stat=0:sdim regdat,regsize:RegQueryValueEx reghwnd,0,0,0,varptr(regdat),varptr(regsize)
+			}
+			RegCloseKey reghwnd
+			if regdat!"":noteadd "HSPScriptEditor="+regdat:else:noteadd "HSPScriptEditor="+notedat
+		}
+	}
+	if instr(mdata,0,"ListSelTimeout=")=-1:noteadd "ListSelTimeout=10000"			// リストの編集の有効時間
+	if instr(mdata,0,"ListCheckSize=")=-1:noteadd "ListCheckSize=40"			// リストのチェックボックス
+	// エディタの命令変換部分
+	if instr(mdata,0,"ListCommand1=")=-1:noteadd "ListCommand1=135"
+	if instr(mdata,0,"ListCommand2=")=-1:noteadd "ListCommand2=220"
+	if instr(mdata,0,"ListCommand3=")=-1:noteadd "ListCommand3=440"
+	if instr(mdata,0,"ListCommand4=")=-1:noteadd "ListCommand4=440"
+	// エディタのラベル修正部分
+	if instr(mdata,0,"ListLabel1=")=-1:noteadd "ListLabel1=200"
+	if instr(mdata,0,"ListLabel2=")=-1:noteadd "ListLabel2=100"
+	// エディタのソフトウェア設定部分
+	if instr(mdata,0,"ListMain1=")=-1:noteadd "ListMain1=200"
+	if instr(mdata,0,"ListMain2=")=-1:noteadd "ListMain2=400"
+	// 変換ログ画面
+	if instr(mdata,0,"ResultList1=")=-1:noteadd "ResultList1=100"
+	if instr(mdata,0,"ResultList2=")=-1:noteadd "ResultList2=150"
+	if instr(mdata,0,"ResultList3=")=-1:noteadd "ResultList3=100"
+	if instr(mdata,0,"ResultList4=")=-1:noteadd "ResultList4=100"
+
+	
+	m_lslocal mdata	// 設定操作モジュール初期化
+
+	notesave "Main_data.dat"
+	
+	// 
+	// CDATA FORMAT
+	//
+	// (HSP2 スクリプト) (TAB) (HSP3 スクリプト) (TAB) (条件式) // コメント
+	//
+	// HSP2スクリプト、HSP3スクリプト以外は省略可能
+	//
+	
+	cdata={"int %1	%1=int(%1)		
+	str %1	%1=str(%1)		
+	curdir	dir_cur		
+	exedir	dir_exe		
+	windir	dir_win		
+	sysdir	dir_sys		
+	winx	ginfo_winx		
+	winy	ginfo_winy		
+	rval	ginfo_r		
+	gval	ginfo_g		
+	bval	ginfo_b		
+	paluse	ginfo_paluse		
+	dispx	ginfo_dispx		
+	dispy	ginfo_dispy		
+	csrx	ginfo_cx		
+	csry	ginfo_cy		
+	cmdline	dir_cmdline		
+	rnd %1,%2	%1=rnd(%2)		
+	gettime %1,%2	%1=gettime(%2)		
+	wpeek %1,%2,%3	%1=wpeek(%2,%3)		
+	peek %1,%2,%3	%1=peek(%2,%3)		
+	notemax %1	%1=notemax		
+	strlen %1,%2	%1=strlen(%2)		
+	sysinfo %1,%2	%1=sysinfo(%2)		
+	getpath %1,%2,%3	%1=getpath(%2,%3)		
+	strmid %1,%2,%3,%4	%1=strmid(%2,%3,%4)		
+	instr %1,%2,%3,%4	%1=instr(%2,%4,%3)		
+	sndload	mmload		
+	snd	mmplay		
+	sndoff	mmstop		
+	alloc	sdim		
+	getpal	palcolor		
+	skiperr %1	/*skiperr %1*/		
+	text %1	/*text %1*/		
+	objsend %1,%2,%3,%4	sendmsg objinfo(%1,2), %2, %3,varptr(%4)		
+	objsend %1,%2,%3,%4,0	sendmsg objinfo(%1,2), %2, %3, %4		
+	objsend %1,-1	objsel %1		
+	fxdir %1,-1	%1=dir_sys		
+	fxdir %1,16	%1=dir_desktop		
+	fxdir %1,5	%1=dir_mydoc		
+	fxdir %1,2	%1=dirinfo(0x10002)		
+	fxdir %1,6	%1=dirinfo(0x10006)		
+	fxdir %1,7	%1=dirinfo(0x10007)		
+	fxdir %1,8	%1=dirinfo(0x10008)		
+	fxdir %1,9	%1=dirinfo(0x10009)		
+	fxdir %1,11	%1=dirinfo(0x1000B)		
+	fxdir %1,16	%1=dirinfo(0x10010)		
+	fxdir %1,19	%1=dirinfo(0x10013)		
+	fxdir %1,21	%1=dirinfo(0x10015)		
+	fxdir %1,22	%1=dirinfo(0x10016)		
+	fxdir %1,23	%1=dirinfo(0x10017)		
+	fxdir %1,24	%1=dirinfo(0x10018)		
+	fxdir %1,25	%1=dirinfo(0x10019)		
+	fxdir %1,26	%1=dirinfo(0x1001A)		
+	fxdir %1,27	%1=dirinfo(0x1001B)		
+	fxdir %1,32	%1=dirinfo(0x10020)		
+	fxdir %1,33	%1=dirinfo(0x10021)		
+	fxdir %1,34	%1=dirinfo(0x10022)		
+	palfade %1	palcolor : palette ,ginfo(16),ginfo(17),ginfo(18),1		
+	str %1,16	%1=strf("%x",%1)		
+	str %1,10	%1=strf("%d",%1)		
+	ginfo 0	prmx=ginfo_mx:prmy=ginfo_my		
+	ginfo 1	prmx=ginfo_act:prmy=ginfo_sel		
+	ginfo 2	prmx=ginfo_wx1:prmy=ginfo_wy1		
+	ginfo 3	prmx=ginfo_wx2:prmy=ginfo_wy2		
+	ginfo 4	prmx=ginfo_vx:prmy=ginfo_vy		
+	ginfo 5	prmx=ginfo_sizex:prmy=ginfo_sizey		
+	ginfo 6	prmx=ginfo_winx:prmy=ginfo_winy		
+	ginfo 7	prmx=ginfo_mesx:prmy=ginfo_mesy		
+	ginfo %1	prmx=ginfo(%1*2):prmy=ginfo(%1*2+1)		
+	picload %1,1,%2,%3	pos %2,%3:picload %1,1
+	instr %1,%2,%3	%1=instr(%2,0,%3)
+	"}
+
+	//
+	// LDATA FORMAT
+	//
+	// (命令名) (対象となる引数番号) // コメント
+	//
+	
+	ldata={"exgoto 4
+	gosub 1
+	goto 1
+	onclick 1
+	onerror 1
+	onexit 1
+	onkey 1
+	button 2"}
+
+	cpssave "Command",cdata,overwrite 
+	cpssave "Label",ldata,overwrite
+	adata=""
+	cpssave "Insert",adata,overwrite
+	wshmd={"
+	'
+	' VBScript (内部的に、ScriptControl より VBScript を実行しております。）
+	' ここで指定されたコードは、
+	' 命令変換の条件照合と変換処理の前と後のユーザー命令に使用できます。
+	'
+	' 設定ファイルの初期値では、セキュリティの観点から使用しないことになっております。
+	'　使用する場合は、設定を変更の上「自己責任で」ご使用ください。
+	'
+	Function FirstRun(code)
+	'
+	' 設定されていれば、変換処理の前にこの命令を実行します。
+	'　なお、返り値が空、もしくは０以下の数字でなかった場合は、返されたものをコードと見なし更新します。
+	'
+	FirstRun=0
+	End Function
+	
+	Function LastRun(code)
+	'
+	' 設定されていれば、変換処理の後にこの命令を実行します。
+	'　なお、返り値が空、もしくは０以下の数字でなかった場合は、返されたものをコードと見なし更新します。
+	'
+	LastRun=0
+	End Function
+
+	Function VB_Calc(exp)
+	'
+	' コマンド変換時の[ ～ ] の計算に使用されます。
+	'　変数exp に計算式が書き込まれており、返り値に計算結果を与えます。
+	'　また、[insert] と指定した部分には直接、exp と同等の内容が書き込まれます。
+	'
+	IF IsNumeric(exp)=0:VB_Calc=exp:Exit Sub
+	VB_Calc=EVal(exp)
+	End Function
+
+	Function VB_IF(exp)
+	'
+	' コマンド変換時の 条件照合に使用されます。
+	'　変数exp に計算式が書き込まれており、返り値に計算結果を与えます。
+	'　また、[insert] と指定した部分には直接、exp と同等の内容が書き込まれます。
+	'
+	' 0 = False
+	' 1 = True 
+	'
+
+	IF InStr(exp,"=")=0 Then VB_Calc=1 : Exit Function
+	VB_Calc=EVal(exp)*-1
+	
+	'
+	' 以下の内容でも可能。
+	' IF [insert] Then VB_Calc=1 Else VB_Calc=0
+	'
+	End Function
+	"}
+	cpssave "WSHM",wshmd,overwrite
+	chdir mainfd
+	return
+	#global

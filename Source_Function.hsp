@@ -1,0 +1,192 @@
+	//
+	//	Mimura Software ソースコンバータ２
+	//				開発ソース
+	//		汎用関数　（ワイルドカード処理・WSH・プロセス待ち起動 ）
+
+	#module WSH
+	#deffunc PassCompiler var code,local result,local wshshell
+	newcom WshShell, "WScript.Shell"
+	code = WshShell("ExpandEnvironmentStrings",code)
+	delcom WshShell
+	return
+	#global
+
+	#module ProcessBoot
+	#deffunc WaitBoot str pass,local prinfo,local stinfo
+	dim stinfo,17
+	stinfo.0=68
+	dim prinfo,4
+	CreateProcess 0,pass,0,0,0,0,0,dirinfo(0),varptr(stinfo),varptr(prinfo)
+	if stat=0:return
+	CloseHandle prinfo.1
+	SetWindowLong hwnd,-16,getwindowlong(hwnd,-16)|0x08000000
+	repeat
+	WaitForSingleObject prinfo.0,0
+	if stat=0:break
+	await 100
+	loop
+	SetWindowLong hwnd,-16,getwindowlong(hwnd,-16)-0x08000000
+	return
+
+	#deffunc ProgramBoot str pass,local prinfo,local stinfo
+	dim stinfo,17
+	stinfo.0=68
+	dim prinfo,4
+	CreateProcess 0,pass,0,0,0,0,0,dirinfo(0),varptr(stinfo),varptr(prinfo)
+	if stat=0:return
+	CloseHandle prinfo.0:CloseHandle prinfo.1
+	return
+	#global
+	
+	#module Wildcard
+	#defcfunc wildcardmake str base_,str math_,local ext,local skip,local baseid,local key,local true,local math,local base,local dotsw
+	//
+	// WildCardMake
+	// 指定されたファイル名を、指定されたワイルドカードにあわせて変更したものを出力する (関数命令)
+	//
+	// base_ - 元のファイル名
+	// math_ - ワイルドカード
+	//
+	base=base_
+	math=math_
+	baseid=0
+	dotsw=0
+	sdim ext,640
+	repeat strlen(math)
+	if strmid(base,baseid,1)=".":dotsw=1
+	if strmid(math,cnt,1)=".":dotsw=0:{
+		repeat strlen(base)
+		if strmid(base,strlen(base)-1-cnt,1)=".":baseid=strlen(base)-1-cnt:break
+		loop
+	}
+	
+	if strmid(math,cnt,1)="?"{
+		if (strlen(base)>baseid)&(dotsw=0):{
+			ext=""+ext+strmid(base,baseid,1)
+			if strmid(base,baseid,1)=".":dotsw=1
+			baseid=baseid+1
+			continue
+		} else:continue
+	}
+	if strmid(math,cnt,1)="*":{
+		if dotsw=1:ext=""+ext+".":dotsw=0:baseid=baseid-1
+		key=strmid(math,cnt+1,1)
+		true=0
+		if (strlen(base)-baseid)>0:{
+			repeat strlen(base)-baseid-skip
+			if strmid(base,(strlen(base)-1)-cnt-skip,1)=key:ext=""+ext+strmid(base,baseid,(strlen(base)-1)-cnt-baseid-skip):true=1:baseid=(strlen(base)-1)-cnt:break
+			loop
+		}
+		if true=0:{
+			ext=""+ext+strmid(base,baseid,strlen(base)-baseid):baseid=strlen(base)
+		}
+		continue
+	}
+	ext=""+ext+strmid(math,cnt,1)
+	baseid=baseid+1
+	loop
+	return ext
+	#global
+
+	#module
+	#defcfunc IsJapanese var data,int point
+	//
+	// 二バイト文字かどうかを検査。
+	//
+	// 返り値
+	//
+	// 1 -> True
+	// 0 -> False
+	#define ctype IsSJIS1st(%1) (($81<=%1 & %1<=$9f)|($e0<=%1 & %1<=$fc)) ; 漢字第一バイトを判定
+	#define ctype IsSJIS2nd(%1) (($40<=%1 & %1<=$7e)|($80<=%1 & %1<=$fc)) ; 漢字第二バイトを判定
+	
+	if point<1:return 0
+	if (IsSJIS1st(peek(data, point-1))=1)&(IsSJIS2nd(peek(data,point))=1):return 1
+
+	return 0
+	#global
+
+//以下、
+// http://hspwiki.tm.land.to/?mesbox%C6%E2%A4%C7%A4%CE%B8%A1%BA%F7%BC%C2%C1%F5
+//より引用したものを改悪
+
+	#module
+	//指定した変数のバイト位置を文字インデックスに変換
+	//p1: 文字インデックス値を取得する文字列型変数
+	//p2: 変換したいバイト位置
+	#defcfunc ByteToStrIndex var p1, int p2,local s2,local s1
+	s2=0
+	repeat p2
+   	     s1=peek(p1,cnt)
+  	      if ((s1>=$81)&(s1<=$9f))|((s1>=$e0)&(s1<=$fc))=1{
+     	       s2+
+     	       continue cnt+2
+     	   }else:s2+     
+	loop
+	return s2
+	//指定した変数の文字インデックスをバイト位置に変換
+	//p1: 文字インデックス値を取得する文字列型変数
+	//p2: 変換したい文字インデックス値
+	#defcfunc StrIndexToByte var p1, int p2,local s2,local s1
+	s2=0                    //byteカウント
+	repeat p2
+ 	   s1=peek(p1,s2)
+ 	   if ((s1>=$81)&(s1<=$9f))|((s1>=$e0)&(s1<=$fc)){
+  	      s2+2
+   	 }else{
+   	     s2+
+   	 }
+	loop
+	return s2
+ 
+	//テキストボックスから文字列を検索し、見つかった場合選択する。 Ver.1.3 by As.
+	//p1: テキストボックスのオブジェクトハンドル
+	//p2: 検索する文字列
+	//
+	// 返り値 -> 0:正常終了 -1:データが見つからない -2:致命的なエラー
+	#deffunc TextFindSelect int p1, str p2,local s1,local s2,local s3,local s4,local s5
+ 
+	//文字インデックス取得かバイト取得か調べる (初回のみ）
+	if findselectflag=0{
+    //ウィンドウの作成
+    CreateWindowEx 0, "Edit" ,"１２３４５",$40000000 | $10000000 | $00800000 | $00000004 , 20, 50, 150, 50, hwnd, 0, hinstance, NULL
+    s1=stat
+    
+    //テキストを選択し文字量を取得(環境のよって取得される値が異なる)
+    sendmsg s1, $b1, 0,-1
+    sendmsg s1, $b0, 0, varptr(s2)
+    if s2=10:findselectflag=1        //バイトで文字が取得されている
+    if s2=5:findselectflag=2        //文字インデックスで文字が取得されている
+    DestroyWindow s1	// 破棄
+    if findselectflag=0:return -2
+}
+    s1=p3
+    sendmsg p1,WM_GETTEXTLENGTH,0,0
+    sdim s3,stat
+    sendmsg p1,WM_GETTEXT,stat,varptr(s3)
+    sendmsg p1,$b0,0,varptr(s5)
+    
+    if findselectflag=2:s5=StrIndexToByte(s3,s5)            //キャレット位置までのByteサイズを代入（文字インデックスの場合)
+ 
+    //大文字小文字関係なく検索
+    CharLowerA varptr(s3):CharLowerA varptr(s1)
+ 
+    //検索
+    s1=p2
+    s4 = instr( s3, s5, s1 )
+    if s4 = -1:{
+	if instr(s3,0,s1)=-1:return -1:else:s4=instr(s3,0,s1)
+   } else :s4=s4+s5	// オフセットを加算
+       //文字インデックスなら実行
+    if findselectflag=2{
+            s4=ByteToStrIndex(s3,s4)            //文字列インデックスに変換
+            s6=ByteToStrIndex(s1,strlen(s1))    //検索文字列の文字数を代入
+    }else{
+            s6=strlen(s1)                        //検索文字列のByteサイズを代入
+    }
+    SetFocus p1
+    sendmsg p1, $b1, s4, s4+s6        //選択範囲を設定
+    sendmsg p1, $b7                    //キャレットを画面内に持ってくる         
+    return 0
+	#global
+	

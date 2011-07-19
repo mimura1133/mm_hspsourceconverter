@@ -1,0 +1,273 @@
+	//
+	//	Mimura Software ソースコンバータ２
+	//				開発ソース
+	//		ウインドウ関連
+
+	//
+	// Module:KERNEL_OUT
+	// カーネルの表示についてのサポートを行う。
+	//
+	#module KERNEL_OUT
+	#deffunc kset int outhwnd_
+	//
+	// outhwnd
+	//  表示するオブジェクトへのハンドルを設定
+	//
+	outhwnd=outhwnd_
+	return
+
+	#deffunc kcls
+	sendmsg outhwnd,0xC,0,0
+	return
+	
+	#deffunc kmes str ext_,local ext,local get
+	ext=ext_
+	sendmsg outhwnd,0xE,0,0
+	sdim get,stat+256
+	sendmsg outhwnd,0xD,stat+256,varptr(get)
+	if get!"":ext=get+"\n"+ext
+	sendmsg outhwnd,0xC,0,varptr(ext)
+	return
+	#global
+	
+	//
+	// Module:TAB_CONTROL
+	// タブに関する制御を行う
+	//
+	
+	#module Tab_Control
+	#deffunc InsertTab int htab,int tabitem,str psztext_,local tcitem,local psztext,local rect
+	// 
+	// InsertTab
+	//
+	// htab     -  タブコントロールのハンドル
+	// tabitem  -  アイテム番号
+	// psztext_ -  ラベルテキスト     
+	//
+	pszText = psztext_ : tcitem = 1, 0, 0, varptr (pszText)
+	sendmsg hTab, $1307, TabItem, varptr (tcitem)
+	dim rect,4
+	GetClientRect hTab, varptr (rect)
+	sendmsg hTab, $1328, , varptr (rect)
+	bgscr TabItem+100, rect.2 - rect.0, rect.3 - rect.1, 2, rect.0, rect.1
+	SetWindowLong hwnd, -16, $40000000
+	SetParent hwnd, hTab
+	return
+	#deffunc ReleaseTab int tabitem
+	repeat tabitem
+	gsel 100+cnt,-2
+	SetParent hwnd,0
+	loop
+	gsel 0,1
+	return
+	#global
+
+	//
+	// Module:WINDOW_FUNCTION
+	// ウインドウ全般の設定を行う
+	//
+	#module Window_Function
+	
+	#deffunc Normalcls local r,local g,local b
+	
+	//
+	// Normal CLS
+	// システムカラーでウインドウを塗りつぶす
+	//
+	
+	R=ginfo(16)
+	G=ginfo(17)
+	B=ginfo(18)
+	syscolor 15
+	boxf
+	color R,G,B
+	return
+	
+	#deffunc Windowinit int winx2,int winy2
+	//
+	// Window init
+	// ウインドウを初期化する
+	//
+	// p1 - x
+	// p2 - y
+	//
+	winx=winx2
+	winy=winy2
+	screen 0,winx,winy
+	return
+	
+	#deffunc WindowMake str optioncode,str strcode,local winy2,local exepass,local iconobj
+	//
+	// Window Make
+	// ウインドウの柄を作成する
+	//
+	// p1 - 画面名を書く
+	// p2 - 画面の説明を書く
+	//
+	normalcls
+	color 255,255,255
+	boxf 0,0,winx,winy/6
+	syscolor 16
+	line -1,winy/6-1,winx,winy/6-1
+	line -1,winy-(winy/8),winx,winy-(winy/8)
+	winy2=winy/6
+	sdim EXEPASS,1024
+	iconobj=0
+	GetModuleFileNameA 0,varptr(EXEPASS),1024
+	ExtractIconEx varptr(EXEPASS),0,varptr(iconobj),0,1
+	DrawIconEx hdc,winx-32-10,(winy2/2)-(32/2),iconobj,32,32,0,0,0x0003
+	pos winx-32-50,(winy2/2)
+	objsize 40,22
+	button gosub "ヘルプ",*HELP
+	color 0,0,0
+	font "ＭＳ ゴシック",14,1
+	pos 20,winy2/4
+	mes optioncode
+	font "ＭＳ ゴシック",12,0
+	mes "\t"+strcode
+	pos 20,winy/5
+
+	//
+	// USERWINDOWCLS 命令依存コード
+	//
+	userwindow=-1,winy/6,winx,winy-(winy/8)-1,20,winy/5
+	redraw 1
+	redraw 0
+	return
+
+*HELP
+	CDEXEDIR
+	exist "SC2.chm"
+	if strsize>0:exec "SC2.chm",16
+	return
+	
+	#deffunc userwindowcls local r,local g,local b
+	//
+	// userwindowcls
+	//
+	// ウィザードモードのユーザーウインドウ領域　（上のバーから下のバーまでの領域）
+	// をシステム色で塗りつぶす命令
+	//
+	// ＃WindowMake 命令に依存しています。
+	//
+	R=ginfo(16)
+	G=ginfo(17)
+	B=ginfo(18)
+	syscolor 15
+	boxf userwindow(0),userwindow(1),userwindow(2),userwindow(3)
+	color R,G,B
+	pos userwindow(4),userwindow(5)
+	return
+
+	#deffunc rjumpopt int count,int size
+	//
+	// RJUMPOPT
+	//
+	// オプションのボタン（次へ,戻る等）を入れるポイントに移動する。(右から計算）
+	//
+	// count = ボタン数
+	// size  = ボタンサイズ
+	//
+	objsize size,24
+	pos winx - ((size+5)*(count+1)),(winy-(winy/8))+(((winy-(winy-(winy/8)))-24))/2
+	return
+
+	#deffunc ljumpopt int count,int size
+	//
+	// LJUMPOPT
+	//
+	// オプションのボタン（次へ,戻る等）を入れるポイントに移動する。(左から計算）
+	//
+	// count = ボタン数
+	// size  = ボタンサイズ
+	//
+	objsize size,24
+	pos 5 + ((size+5)*count),(winy-(winy/8))+(((winy-(winy-(winy/8)))-24))/2
+	return
+	#global
+
+	//
+	// Module:FOLDER_CONTROL 
+	// フォルダ選択ダイアログ
+	//
+	
+	#module Folder_Control
+	//
+	// BrowseFolder
+	//
+	// P1 = タイトル
+	// P2 = 初期フォルダ
+	//
+	#deffunc BrowseFolder str _szTitle, str _inifolder,local browseinfo,local fncode,local hbdata,local inifldr,local pidl,local retfldr,local sztitle
+	szTitle = _szTitle : inifldr = _inifolder : sdim retfldr, 260 : xdim fncode, 8
+	fncode = $08247c83,$8b147501,$ff102444,$68016a30,$00000466,$102474ff,$330450ff,$0010c2c0
+	hbdata = varptr(inifldr), varptr(SendMessage)
+	BROWSEINFO = hwnd, 0, varptr(retfldr), varptr(szTitle), 3|0x0040, varptr(fncode), varptr(hbdata), 0
+	pidl = SHBrowseForFolder(varptr(BROWSEINFO))
+	SHGetPathFromIDList pidl,varptr(retfldr)
+	CoTaskMemFree pidl
+	return retfldr
+	#global
+
+	//
+	// Module:FILE_CONTROL
+	// ファイル選択ダイアログ
+	//
+
+	#module FILE_CONTROL
+	#deffunc SaveFileName str filter,str lpstrtitle,local OPNAME,local lpstrfilter,local lpstrtitle_
+	//
+	// SaveFileName
+	//
+	// filter - フィルタ (ファイル名|拡張子)の順番で記述
+	// lpstrtitle - タイトル名 (空の場合、標準の物が使用される。)
+	//
+	//
+	lpstrtitle_=lpstrtitle
+	dim OPNAME,22
+	dim lpstrfilter,strlen(filter)/4+1
+	sdim lpstrfile,1024
+	lpstrfilter=filter
+	repeat strlen(lpstrfilter)
+	if peek(lpstrfilter,cnt)='|':poke lpstrfilter,cnt,0:else:poke lpstrfilter,cnt,peek(lpstrfilter,cnt)
+	loop
+	
+	OPNAME(0)=76
+	OPNAME(1)=hwnd
+	OPNAME(3)=varptr(lpstrfilter)
+	OPNAME(7)=varptr(lpstrfile)
+	OPNAME(8)=1024
+	OPNAME(12)=varptr(lpstrtitle_)
+	OPNAME(13)=$1004|0x00080000
+
+	GetSaveFileName varptr(OPNAME)
+	return lpstrfile
+	
+	#deffunc OpenFileName str filter,str lpstrtitle,local OPNAME,local lpstrfilter,local lpstrtitle_
+	//
+	// OpenFileName
+	//
+	// filter - フィルタ (ファイル名|拡張子)の順番で記述
+	// lpstrtitle - タイトル名 (空の場合、標準の物が使用される。)
+	//
+	//
+	lpstrtitle_=lpstrtitle
+	dim OPNAME,22
+	dim lpstrfilter,strlen(filter)/4+1
+	sdim lpstrfile,1024
+	lpstrfilter=filter
+	repeat strlen(lpstrfilter)
+	if peek(lpstrfilter,cnt)='|':poke lpstrfilter,cnt,0:else:poke lpstrfilter,cnt,peek(lpstrfilter,cnt)
+	loop
+	
+	OPNAME(0)=76
+	OPNAME(1)=hwnd
+	OPNAME(3)=varptr(lpstrfilter)
+	OPNAME(7)=varptr(lpstrfile)
+	OPNAME(8)=1024
+	OPNAME(12)=varptr(lpstrtitle_)
+	OPNAME(13)=$1004|0x00080000
+
+	GetOpenFileName varptr(OPNAME)
+	return lpstrfile
+	#global

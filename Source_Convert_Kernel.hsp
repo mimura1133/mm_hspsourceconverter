@@ -1,0 +1,1229 @@
+	//
+	//	Mimura Software ソースコンバータ２
+	//				開発ソース
+	//			変換カーネルソース
+
+	//
+	// 内部設定一覧
+	//
+	// BaseCode - HSP2の変換対象のデータが入る
+	// NewCode  - HSP3の変換後の結果が入る
+	//
+	// cdata - 命令変換の定義データ
+	// ldata - ラベル修正の定義データ
+	//
+	// ecdata - 変換処理が終わったあとに、置き換え作業として置き換える項目。
+	// adata  - 変換処理が終わったあとに、行頭に挿入するデータ。
+	//
+	// Ccnv - 命令変換のスイッチ
+	// Fcnv - Func 修正のスイッチ
+	// Lcnv - ラベル修正のスイッチ
+	// Ecnv - 数式修正のスイッチ
+	// Icnv - #include のスイッチ
+	// Acnv - 挿入のスイッチ
+	// Mcnv - #deffunc, mref の修正のスイッチ
+	// Ncnv - #deffunc 前に #undef を入れるか否かのスイッチ
+	//
+	//#define global DEBUG 1
+	//
+	// つーささん作成、数式修正モジュール。
+	//
+	#module MATH
+
+	// instrの右からバージョン(というか最後に見つかったところを返すだけ)
+	#defcfunc instrr var target, str string, local p, local q 
+	p = -1
+	repeat
+		q = instr(target,p+1,string)
+		if q!-1 { p+=q+1 } else { break }
+	loop
+	return p
+	
+	// 演算子を#??#に置換しながら、その前の部分を[]で括る。
+	#deffunc _InnerConvertExpression var searchdat,var exp,local p, local q
+	
+	repeat length(mathword)
+		while 1
+		p = instr(searchdat, 0, mathword.cnt) : if p = -1 : _break
+		searchdat = "["+strmid(searchdat, 0, p)+"]"+strf("#%02d#",cnt)+strmid(searchdat, p+strlen(mathword.cnt), 32768)
+		exp = "["+strmid(exp, 0, p)+"]"+strf("#%02d#",cnt)+strmid(exp, p+strlen(mathword.cnt), 32768)
+		wend
+	loop
+	return
+
+
+	// HSP2形式で書かれた式をHSP3形式に変換
+	#defcfunc HSP2to3_ConvertExpression str _exp,local searchdat,local key,local dq,local p2,local q2,local searchdat2,local exp2,local dattemp,local dattemp2, local exp , local FStack, local PStack, local lv, local p, local q
+	exp = _exp
+	searchdat=exp
+	dq=0
+	dattemp2=0
+	dattemp=0
+	p = 0
+	p2 = 0
+	repeat strlen(searchdat)
+	if IsJapanese(searchdat,cnt)=1:continue
+	if peek(searchdat,cnt)=92:dattemp=dattemp^1:else:dattemp=0
+	if (peek(searchdat,cnt)=34)&(dattemp=0):dq=dq^1:p2 = 1:poke searchdat,cnt,253
+	if peek(searchdat,cnt)=39:dattemp2=dattemp2^1:poke searchdat,cnt,253
+	if (dq=1)|(dattemp2=1):poke searchdat,cnt,253
+	if peek(searchdat,cnt)=123:p++
+	if peek(searchdat,cnt)=125:p--
+	if p>0:poke searchdat,cnt,253	// 括弧内の無効化
+	
+	if p2 = 1:if peek(searchdat,cnt) = '+' : p2 = 2
+	if p2 = 2:if (peek(searchdat,cnt) = 32)&(peek(searchdat,cnt) = 9):p2 = 0:else:poke searchdat,cnt,253
+	if p2 = 1:if (peek(searchdat,cnt) != 32)&(peek(searchdat,cnt) != 9)&(peek(searchdat,cnt) != 253) : p2 = 0	// 分割は高速化のため
+	loop
+	//// マイナス除去
+	key = "!&*+-/<=>\\^|" : p = 0
+	while instr(searchdat,p,"-")!-1
+		p = instr(searchdat,p,"-") + p
+		if p=0:{
+			searchdat ="#09#" + strmid(searchdat, 1 , 32768) : p+=2
+			exp ="#09#" + strmid(exp, 1 , 32768)
+		} else {
+		repeat p-1,1
+			if peek(searchdat, p-cnt)<=0x20 : continue
+			if instr(key,0, strmid(searchdat,p-cnt,1)) = -1 : break
+			searchdat = strmid(searchdat, 0, p) + "#09#" + strmid(searchdat, p+1 , 32768)
+			exp = strmid(exp, 0, p) + "#09#" + strmid(exp, p+1 , 32768)
+			p+=2
+			break
+		loop
+	}
+		p++
+	wend
+	// 長い順に書かないと、 << が < と < に分割されてしまう！　よ？
+	mathword = "<<",">>","<=",">=","!=","==","&&","||","+","-","*","/","\\","&","|","^","=","<",">","!"
+	// 式を[]で括る。処理済み演算子は#??#に置換される。
+	// ()で括ってしまうと、処理済みかどうか判定が効かなくなる。
+	// ()の内部をあらかじめ
+	while 1
+		// 一番後ろの "(" と、対応する")"を検索
+		p = instrr(searchdat,"(") : if p=-1 : _break 
+		
+		q = instr(searchdat,p,")") : if q=-1 : _break
+
+		searchdat2 = strmid(searchdat,p+1,q-1)
+		exp2 = strmid(exp,p+1,q-1)
+
+		// 内部関数用に、カンマで区切ってさらに読み出す。
+		if instr(searchdat2,0,",")!-1:{
+		repeat
+		p2 = instrr(searchdat2,",") :if p2=-1 :p2=0
+		q2 = strlen(searchdat2)+1
+		if strmid(searchdat2,p2,1)="," :{
+			dattemp=strmid(searchdat2,p2+1,q2-1):dattemp2=strmid(exp2,p2+1,q2-1)
+			_InnerConvertExpression dattemp,dattemp2
+			searchdat2=strmid(searchdat2,0,p2)+":"+dattemp+strmid(searchdat2,p2+q2+1,strlen(searchdat2)-q2-p2-1)
+			exp2=strmid(exp2,0,p2)+":"+dattemp2+strmid(exp2,p2+q2+1,strlen(exp2)-q2-p2-1)
+		}
+		if strmid(searchdat2,p2,1)!",":{
+			dattemp=strmid(searchdat2,p2,q2):dattemp2=strmid(exp2,p2,q2)
+			_InnerConvertExpression dattemp,dattemp2
+			searchdat2=strmid(searchdat2,0,p2)+dattemp+strmid(searchdat2,p2+q2+1,strlen(searchdat2)-q2-p2-1)
+			exp2=strmid(exp2,0,p2)+dattemp+strmid(exp2,p2+q2+1,strlen(exp2)-q2-p2-1)
+		}
+		if p2=0:break
+		loop
+	}
+		// ()を[]に置き換えて、また引っかからないようにする。
+		_InnerConvertExpression searchdat2,exp2
+		searchdat = strmid(searchdat,0,p)+"["+searchdat2+"]"+strmid(searchdat,p+q+1,32768)
+		exp = strmid(exp,0,p)+"["+exp2+"]"+strmid(exp,p+q+1,32768)
+	wend
+	while 1
+		p2="'"
+		// 一番後ろの "{" と、対応する"}"を検索
+		p = instrr(searchdat,"{") : if p=-1 : _break 
+		q = instr(searchdat,p,"}") : if q=-1 : q=strlen(searchdat)-p-2:p2=""
+		searchdat2 = strmid(searchdat,p+1,q-1)
+		exp2 = strmid(exp,p+1,q-1)
+		// {}を"'に置き換えて、また引っかからないようにする。
+		_InnerConvertExpression searchdat2,exp2
+		searchdat = strmid(searchdat,0,p)+"\""+searchdat2+""+p2+""+strmid(searchdat,p+q+1,32768)
+		exp = strmid(exp,0,p)+"\""+exp2+""+p2+""+strmid(exp,p+q+1,32768)
+	wend
+	_InnerConvertExpression searchdat,exp //最後に全体
+	//// []を()に戻す
+	repeat strlen(searchdat)
+		if IsJapanese(searchdat,cnt)=1:continue
+		if peek(searchdat,cnt) = ':' : poke searchdat,cnt,',':poke exp,cnt,','
+		if peek(searchdat,cnt) = '[' : poke searchdat,cnt,'(':poke exp,cnt,'('
+		if peek(searchdat,cnt) = ']' : poke searchdat,cnt,')':poke exp,cnt,')'
+		if peek(searchdat,cnt) = 34  : poke searchdat,cnt,'{':poke exp,cnt,'{'
+		if peek(searchdat,cnt) = 39  : poke searchdat,cnt,'}':poke exp,cnt,'}'
+	loop
+	// 無駄なカッコを外す　(a) とか ((b+c)) とか。
+	Lv = 0 // stacklv
+	p = 0
+	//logmes " -- FStack --"
+	repeat strlen(searchdat)
+	if IsJapanese(searchdat,p)=1:p++:continue
+	dattemp=peek(searchdat,p)
+	if dattemp=34:dq=1:p++:continue:else:dq=0
+	if dq=1:p++:continue
+	//logmes ""+lv
+		if dattemp = '(' : lv++ : PStack.lv = p : FStack.lv = 0:{
+			if p<1:dattemp2=0:else:dattemp2=peek(searchdat,p-1)
+			if ((dattemp2<58)&(dattemp2>47))|((dattemp2<91)&(dattemp2>64))|((dattemp2<123)&(dattemp2>96)):FStack.lv = 1:else:FStack.lv = 0
+		}
+		if dattemp = '#' : FStack.lv = 1 
+		if dattemp = ')' {
+			if lv>-1:{
+				if FStack.lv = 0 {
+					q = PStack.lv
+					searchdat = strmid(searchdat,0,q) + strmid(searchdat,q+1, p-(q+1)) + strmid(searchdat,p+1,32768)
+					exp = strmid(exp,0,q) + strmid(exp,q+1, p-(q+1)) + strmid(exp,p+1,32768)
+					p-=2
+				}
+			}
+			lv--
+		}
+	p++
+	loop
+	// #??#になってる演算子を戻す
+	repeat length(mathword)
+		while 1
+		p = instr(searchdat, 0, strf("#%02d#",cnt)) : if p = -1 : _break
+		searchdat = strmid(searchdat, 0, p) + mathword.cnt + strmid(searchdat, p+4 , 32768)
+		exp = strmid(exp, 0, p) + mathword.cnt + strmid(exp, p+4 , 32768)
+		wend
+	loop
+	return exp
+
+	#global
+	
+	//
+	// Module : VBScript_Convert
+	//　VB を使う変換、処理を実行する部分
+	//
+	#module VBScript_Convert
+	#deffunc VB_Script_Init
+	//
+	// ScriptControl
+	//　初期化
+	//
+	newcom objVBsc, "ScriptControl"
+	if stat=1:DisableVBScript=1:delcom objVBsc : return		// コントロールが使えないひと。
+	comres Comresponce		// COMコントロールからの返信。
+	objVBsc("Language")="VBScript"
+	cpsload "WSHM",code
+	return
+
+	#deffunc VB_Script_Finish
+	delcom objVBsc
+	return
+
+	#deffunc VB_Firstrun var basecode
+	//
+	// VBマクロを動作させる - FirstRun
+	//
+	if (int(M_Load("UseVBScript"))=1)&(int(M_Load("RunScriptFirst"))=1)&(DisableVBScript=0):{
+		// VBScript FirstRun 実行
+		objVBsc->"AddCode" code
+		objVBsc->"Run" "FirstRun",basecode
+		if (Comresponce>0)&(Comresponce!""):basecode=Comresponce
+	}
+	return
+
+	#deffunc VB_Lastrun var basecode
+	//
+	// VBマクロを動作させる - LastRun
+	//
+	if (int(M_Load("UseVBScript"))=1)&(int(M_Load("RunScriptLast"))=1)&(DisableVBScript=0):{
+		// VBScript FirstRun 実行
+		objVBsc->"AddCode" code
+		objVBsc->"Run" "LastRun",basecode
+		if (Comresponce>0)&(Comresponce!""):basecode=Comresponce
+	}
+	return
+
+	#defcfunc eval str exp_,local source,local addp,local jump,local exp
+	//
+	// 文字列データの計算式を計算する
+	//
+	if DisableVBScript=1 : return exp
+	exp=exp_
+		if int(M_Load("UseVBScript"))=1:{
+			source=code
+			jump=0
+			repeat
+			addp=instr(source,jump,"[insert]")
+			if addp=-1:break
+			addp=jump+addp
+			source=strmid(source,0,addp)+exp+strmid(source,addp+8,strlen(source)-addp-8)
+			jump=addp+strlen(exp)
+			loop
+			objVBsc->"AddCode" source:objVBsc->"Run" "VB_calc",exp
+		} else {
+			objVBsc->"EVal" "IsNumeric("+exp+")"
+			if comresponce!-1:return exp
+			objVBsc->"EVal" exp
+		}
+	return Comresponce
+
+	#defcfunc CheckIF str exp_,local source,local jump,local exp,local addp
+	//
+	// IF文を解釈して処理する
+	//
+	if DisableVBScript=1 : return exp
+	exp=exp_
+		if int(M_Load("UseVBScript"))=1:{
+			source=code
+			jump=0
+			repeat
+			addp=instr(source,jump,"[insert]")
+			if addp=-1:break
+			addp=jump+addp
+			source=strmid(source,0,addp)+exp+strmid(source,addp+8,strlen(source)-addp-8)
+			jump=addp+strlen(exp)
+			loop
+			objVBsc->"AddCode" source:objVBsc->"Run" "VB_IF",exp
+		} else {
+			if instr(exp,0,"=")=-1:{
+				Comresponce=1
+			} else {
+				objVBsc->"EVal" exp :Comresponce=Comresponce*-1
+			}
+		}
+	return Comresponce
+	#global
+	
+	// Module:Call_and_Make
+	//
+	// 与えられた物を、実際に変換する部分
+	// 本当のカーネル部分でもある。
+	//
+	#module Call_and_Make
+	
+	#deffunc CALL_AND_MAKE_INIT str base,local temp,local cnt2,local i,local basecode
+	//
+	// CALL_AND_MAKE_INIT
+	// このモジュール内で初期化が必要な場合は、ここで行う。
+	//
+	sdim Convertdb,1024*10		// データーベースの高速化
+	btoa=""  // BINtoASC の高速化のため。
+
+	//
+	// 一般初期化ここまで
+	//
+	basecode=base
+	CharLower varptr(basecode)
+
+	//
+	// スイッチデータ、および定義データを本モジュール内にコピーする。
+	//　メインデータを分離することにより、データの改ざんによるエラーを未然に防ぐ。
+	//
+
+	//
+	// 変換定義データ
+	//
+	cdata=cdata@Convert_Main		// 命令動的変換定義データ
+	ldata=ldata@Convert_Main		// ラベル修正定義データ
+	ecdata=ecdata@Convert_Main		// 命令静的変換定義データ
+	//
+	// 変換設定データ
+	//
+	Ccnv=Ccnv@Convert_Main			// 命令変換スイッチ
+	Fcnv=Fcnv@Convert_Main			// #Func 修正スイッチ
+	Lcnv=Lcnv@Convert_Main			// ラベル修正スイッチ
+	Ecnv=Ecnv@Convert_Main			// 数式変換スイッチ
+	Icnv=Icnv@Convert_Main			// #include,#addition スイッチ
+	Mcnv=Mcnv@Convert_Main			// #deffunc 変換スイッチ
+	Ncnv=Ncnv@Convert_Main			// #deffunc 前に #undef を入れるかどうか。
+	cnt2=0
+	cindex = ""
+	csdat = ""
+	if cdata!"":{
+	notesel cdata
+	sdim cindex,noteinfo(0)
+	repeat noteinfo(0)
+	notesel cdata
+	noteget temp,cnt2
+	if instr(temp,0,"	")=-1:notedel cnt2:continue
+	if (instr(temp,0," ")>instr(temp,0,"	"))|(instr(temp,0," ")=-1):i=instr(temp,0,"	"):else:i=instr(temp,0," ")
+	CharLower varptr(temp)
+	if instr(basecode,0,strmid(temp,0,i))=-1:notedel cnt2:else:notesel csdat:noteadd strmid(temp,0,i):poke cindex,cnt2,peek(temp,0):cnt2+
+	loop
+}
+	cnt2=0
+	lindex=""
+	lsdat = ""
+	if ldata!"":{
+	notesel ldata
+	sdim lindex,noteinfo(0)
+	repeat noteinfo(0)
+	notesel ldata
+	noteget temp,cnt2
+	if instr(temp,0," ")=-1:notedel cnt2:continue
+	CharLower varptr(temp)
+	if instr(basecode,0,strmid(temp,0,instr(temp,0," ")))=-1:notedel cnt2:else:notesel lsdat:noteadd strmid(temp,0,instr(temp,0," ")):poke lindex,cnt2,peek(temp,0):cnt2+
+	loop
+}
+	cnt2=0
+	if ecdata!"":{
+	notesel ecdata
+	repeat noteinfo(0)
+	notesel ecdata
+	noteget temp,cnt2
+	if instr(temp,0,"	")=-1:notedel cnt2:continue
+	CharLower varptr(temp)
+	if instr(basecode,0,strmid(temp,0,instr(temp,0,"	")))=-1:notedel cnt2:else:cnt2+
+	loop
+}
+	return
+
+	#deffunc MtoD array DB,str variable,int ID,var funcload,local type
+	// 
+	// mref To deffunc
+	//
+	// HSP2 の mref 命令を分解した物を与えて、
+	// HSP3 の #deffunc を作る元となるデータベースに値を代入する
+	//
+	type = getpath(DB(id),16)
+	repeat
+	if peek(type,0) = ' ':type = strmid(type,1,strlen(type)):continue
+	if peek(type,0) = '	':type = strmid(type,1,strlen(type)):continue
+	break
+	loop
+	if type = "int" : DB(id) = " int "+variable
+	if type = "str" : DB(id) = " str "+variable
+	if type = "val" : DB(id) = " var "+variable
+	funcload = ""
+	return
+	
+	#deffunc ReadandMake var main,var start,var count,var result,local getm,local jyen,local dbsw,local testcount,local searchkey,local cnt2,local cnt3,local stack,local gets,local gete,local getcount,local funcload,local data,local startcut,local endcut,local btemp,local btemp2,local btemp3,local comma
+	//
+	// ReadandMake
+	// 与えられた物を分解し、変換を行う。
+	//
+	// main - 全体のデータが送られる
+	// start - 始点
+	// count - 読み出し先の動的アドレス
+	// result - このモジュールからの返答。 普通は空でかまわない。
+	//
+	result=""
+	// おかしいのをとばす。
+	if (start>count)|(start=count):count=start:return
+	
+	//
+	// 不要読み飛ばし。　（前方）
+	//
+	repeat
+	if start>(strlen(main)-1):break
+	if IsJapanese(main,start)=1:break
+	startcut=peek(main,start)
+	if (startcut=' ')|(startcut='	')|(startcut=':')|(startcut='{')|(startcut='}')|(startcut=10)|(startcut=13):start+:continue
+	break
+	loop
+
+	//
+	// 不要読み飛ばし。　（後方）
+	//
+	repeat
+	if count<1:break
+	if count>(strlen(main)-1):break
+	if IsJapanese(main,count-1)=1:break
+	endcut=peek(main,count-1)
+	if (endcut=' ')|(endcut='	')|(endcut=':')|(endcut='{')|(endcut='}')|(endcut=13)|(endcut=10):count=count-1:continue
+	break
+	loop
+	//
+	// おかしいのはあらかじめとばす。
+	//
+	if (start>count)|(start=count):count=start:return
+	if strmid(main,start,2)="//":return
+	if strmid(main,start,1)=";":return
+	
+	//
+	// 先頭が # の命令の処理
+	//
+	if (Mcnv = 1)|(fcnv=1)|(Icnv=1):{
+		btemp = peek(main,start)
+			if btemp='#':{						// # であれば、処理を行ってね。
+				btemp2=""
+				getstr btemp2,main,start,' '
+					if (Mcnv=1)&(getpath(btemp2,16)="#deffunc"){
+						// 各引数のデータベース
+						repeat 9
+						ConvertDB(cnt) = ""
+						loop
+						cnt2 = start
+						start = start+strlen(btemp2)
+						repeat
+						if peek(main,start) = ' ':start++:continue
+						break
+						loop
+						getstr getm,main,start,' '
+						if Ncnv = 1:result="ADD UNDEFDB:#undef "+getm
+						repeat
+						if peek(main,start) != ' ':start++:continue
+						break
+						loop
+						repeat
+						if peek(main,start) = ' ':start++:continue
+						break
+						loop
+						gets = strmid(main,start,count-start)
+						if gets = "":start=count:return	// 指定なしをいじってもどうしようもないので。
+						cnt2 = 0
+						repeat strlen(gets)
+						getstr ConvertDB(cnt2),gets,0,','
+						if ConvertDB(cnt2) = "onexit":break
+						if strsize = 0:break
+						gets=strmid(gets,strsize,strlen(gets))
+						cnt2++
+						loop
+						if ConvertDB(0) = "onexit" :start=count:return	// ONEXIT は変換しようがないので。
+
+						getcount=0							// ダブルコーテーション判定
+						cnt2=instr(main,start,"\n")+start	// カウンタ
+						jyen=0								// \ マーク
+						comma=0								// ' マーク
+						repeat strlen(main)
+						if IsJapanese(main,cnt2):cnt2++:continue
+						if peek(main,cnt2)=92:jyen=jyen^1:else:jyen=0
+						if peek(main,cnt2)=39:comma=comma^1
+						if (peek(main,cnt2)=34)&(jyen=0):getcount=getcount^1	// ダブルコーテーション
+						if (getcount=1)|(comma=1):cnt2++:continue
+						if ((peek(main,cnt2)='R')|(peek(main,cnt2)='r')) {
+							if getpath(strmid(main,cnt2,strlen("return")),16) == "return":break
+						}
+						if peek(main,cnt2)='#' {
+							if getpath(strmid(main,cnt2,strlen("#deffunc")),16) == "#deffunc" :break
+							if getpath(strmid(main,cnt2,strlen("#global")),16) == "#global" :break
+						}
+						if ((peek(main,cnt2)='M')|(peek(main,cnt2)='m')) {
+							if getpath(strmid(main,cnt2,strlen("mref")),16) == "mref" {
+								gete = instr(main,cnt2,":")
+								if gete < 0:gete = strlen(main)
+								if  gete > instr(main,cnt2,"\n") {
+									gete = instr(main,cnt2,"\n")
+									gets = strmid(main,cnt2,gete)
+								} else {
+									gete = instr(main,cnt2,":")
+									gets = strmid(main,cnt2,gete)
+								}
+								
+								repeat
+								if ((strmid(gets,-1,2) = "/*")|(strmid(gets,-1,2) = "//")) : gets = strmid(gets,0,strlen(gets)-2):continue
+								if (strmid(gets,-1,1) = ";") : gets = strmid(gets,0,strlen(gets)-1):continue
+								break
+								loop
+								funcload = gets	// mref 代理
+								
+								gets = strmid(gets,instr(gets,0," ")+1,strlen(gets))
+								getstr getm,gets,0,','
+								gets = int(strmid(gets,strsize,strlen(gets)))
+								if(gets>=0)&(gets<=7) : MtoD ConvertDB,getm,gets,funcload
+								if(gets>=16)&(gets<=17) : MtoD ConvertDB,getm,gets-16,funcload
+								if(gets>=24)&(gets<=25) : MtoD ConvertDB,getm,gets-24,funcload
+								if(gets>=32)&(gets<=33) : MtoD ConvertDB,getm,gets-32,funcload
+								if (gets>=48)&(gets<=49) : ConvertDB(gets-48) = "array "+getm : funcload = ""
+								if (gets>=56)&(gets<=57) : ConvertDB(gets-48) = "array "+getm : funcload = ""
+								main = ""+strmid(main,0,cnt2)+""+funcload+""+strmid(main,gete+cnt2,strlen(main))
+							}
+						}
+						cnt2+
+						loop
+						btemp2 = ""
+						repeat length(ConvertDB)
+						if ConvertDB(cnt) = "":break
+						btemp2=btemp2+""+ConvertDB(cnt)+","
+						loop
+						btemp2 = strmid(btemp2,0,strlen(btemp2)-1)
+						main = strmid(main,0,start)+btemp2+strmid(main,count,strlen(main))
+						start = start+strlen(btemp2)
+						count = start
+						return
+					}
+					
+					if (Icnv=1)&((getpath(btemp2,16)="#include")|(getpath(btemp2,16)="#addition")):{
+						gets=instr(main,strlen(btemp2)+start,"\"")+strlen(btemp2)+1+start
+						gete=instr(main,gets,"\"")
+						result="SubCall:"+strmid(main,gets,gete)+":"+(gets+gete)
+						main=strmid(main,0,gets+gete)+".hsp"+strmid(main,gets+gete,strlen(main)-(gets+gete))
+						count+3
+
+						start=count:return
+					}
+					
+					if (fcnv=1)&(getpath(btemp2,16)="#func"):{
+						funcload=0
+						// 検索
+						funcload=count
+						repeat count-start
+						if peek(main,funcload-1)!' ':funcload-1:else:funcload=strmid(main,funcload,count-funcload):break
+						loop
+						if vartype(funcload)=2:{
+							if strmid(funcload,0,2)="0x":funcload="$"+strmid(funcload,2,strlen(funcload)-2)
+							funcload=int(funcload)
+							//
+							// 目的のコードだけ出すように、数値を修正
+							//
+							if funcload>(256-1):funcload=funcload-256
+							if funcload>(128-1):funcload=funcload-128
+							if funcload>(48-1):funcload=funcload-48
+							if funcload>(32-1):funcload=funcload-32
+							if funcload>(16-1):funcload=funcload-16
+							//
+							// #func 無効化
+							//　タイプ 3 と タイプ 7 を無効化するシステム。 ( PVAL に互換性がないため)
+							//
+							if (funcload=3)|(funcload=7):{
+								main=strmid(main,0,start)+"/*"+strmid(main,start,count-start)+"*/"+strmid(main,count,strlen(main)-count)
+								count+4
+							}
+						}
+					start=count:return
+					}
+			start=count
+			return	// ＃関連命令は通常命令と文法が違うため、処理を行わない。
+			}
+	}
+	//
+	// 先頭が # の命令の処理ここまで。
+	//
+	//
+	// ラベル修正システム。
+	//
+	if (strlen(lindex)>0)&(lcnv=1)&(instr(lindex,0,getpath(strmid(main,start,1),16))!-1):{		// 命令変換するの？
+	btemp=peek(main,start)
+	btemp3=""
+	if (btemp>64)&(btemp<91):btemp=btemp+32		// 定義ファイルの小文字とあわせるための措置。
+		repeat strlen(lindex)
+			if btemp=peek(lindex,cnt):{
+				notesel lsdat
+				noteget btemp2,cnt
+				if btemp3="":getstr btemp3,main,start,' '
+					if getpath(btemp3,16)=btemp2:{
+					notesel ldata
+					noteget btemp2,cnt
+					getcount=int(strmid(btemp2,strlen(btemp3)+1,strlen(btemp2)-strlen(btemp3)-1))
+					gete=start+strlen(btemp3)+1
+					if strmid(main,gete,4) = "goto" : gete+4
+					if strmid(main,gete,5) = "gosub" : gete+5
+					repeat
+						if peek(main,gete)=' ':gete+:else:break
+					loop
+					gets=gete
+					stack=0
+					dbsw=0
+					jyen=0
+					comma=0
+						repeat
+						if gete=count:break
+						if IsJapanese(main,gete)=1:gete++:continue
+						if peek(main,gete)=92:jyen=jyen^1:else:jyen=0
+						if peek(main,gete)=39:comma=comma^1
+						if (peek(main,gete)=34)&(jyen=0):dbsw=dbsw^1
+						if (dbsw=0)&(comma=0):{
+							if peek(main,gete)='(':stack+
+							if peek(main,gete)=')':stack-
+							if (peek(main,gete)=',')&(stack=0):getcount=getcount-1:if getcount=0:break:else:gets=gete+1
+						}
+						gete+
+						loop
+						if gete!count:{
+							repeat
+							if peek(main,gets)=' ':gets+:else:break
+							loop
+						}
+					if strmid(main,gets,1)!"*":{
+						temp=strmid(main,start,count-start)
+						main=strmid(main,0,gets)+"*"+strmid(main,gets,strlen(main)-gets)
+						count+
+					}
+					break
+					}
+			}
+		loop
+	}
+	//
+	// ラベル修正システムここまで。
+	//
+
+	//
+	// 数式変換システム
+	//
+	if ecnv=1:{
+		cnt2=0:cnt3=0
+		repeat count-start,start
+		if IsJapanese(main,cnt)=1:continue
+		if peek(main,cnt)=' ':getcount=1:continue
+		if peek(main,cnt)='=':{
+			getcount=HSP2to3_ConvertExpression(strmid(main,cnt+1,count-cnt-1))
+			main=strmid(main,0,cnt+1)+getcount+strmid(main,count,strlen(main))
+			count=(strlen(getcount)-(count-cnt-1))+count
+			break
+		}
+		if (peek(main,cnt)!' ')&(getcount=1):{
+			cnt2=cnt	// はじめ
+			cnt3=cnt	// おわり
+			stack=0		// ( ～ )
+			getcount=0	// ""
+			comma=0		// ' '
+			funcload=0
+			repeat
+			if (cnt3+cnt)>=count:break
+			if IsJapanese(main,cnt3+cnt)=1:continue
+			if peek(main,cnt3+cnt)=92:jyen=jyen^1:else:jyen=0
+			if (peek(main,cnt3+cnt)=34)&(jyen=0):getcount=getcount^1	// ダブルコーテーション
+			if getcount=1:continue
+			if peek(main,cnt3+cnt)='(':stack++
+			if peek(main,cnt3+cnt)=')':stack--
+			if peek(main,cnt3+cnt)=39:comma=comma^1
+			if stack>0:continue
+			if (peek(main,cnt3+cnt)=',')&(stack=0)&(getcount=0)&(comma=0):{
+				testcount=HSP2to3_ConvertExpression(strmid(main,cnt2,(cnt+cnt3)-cnt2))
+				main=strmid(main,0,cnt2)+testcount+strmid(main,(cnt+cnt3),strlen(main))
+				funcload=(strlen(testcount)-((cnt+cnt3)-cnt2))
+				count=funcload+count
+				cnt2=(cnt+cnt3)+funcload+1
+				cnt3=cnt3+funcload
+			}
+			loop
+			sleep 1
+			if(count - cnt2) > 0{
+				testcount=HSP2to3_ConvertExpression(strmid(main,cnt2,count-cnt2))
+				main=strmid(main,0,cnt2)+testcount+strmid(main,count,strlen(main))
+				count=cnt2+strlen(testcount)
+			}
+			break
+		}
+		loop
+	}
+	//
+	// 数式変換システムここまで
+	//
+	
+	//
+	// 命令変換システム。
+	//
+	if (strlen(cindex)>0)&(Ccnv=1)&(instr(cindex,0,getpath(strmid(main,start,1),16))!-1):{		// 命令変換するの？
+	repeat 11
+	ConvertDB(cnt)=""	// CONVERTDB の 0～10 は初期化する。　（それ以外は、管轄外）
+	loop
+	btemp=peek(main,start)
+	btemp3=""
+	getcount=0
+	if (btemp>64)&(btemp<91):btemp=btemp+32		// 定義ファイルの小文字とあわせるための措置。
+		repeat strlen(cindex)
+			if btemp=peek(cindex,cnt):{
+				notesel csdat
+				noteget btemp2,cnt
+				if btemp3="":getstr btemp3,main,start,' '
+					if getpath(btemp3,16)=btemp2:{
+						//
+						// データベースは、
+						// Convertdb にて。
+						//
+						
+						// 定義データと
+						// 変換対象データを同時に読み取り、
+						// 評価とデーターベース作成を同時に行う。
+						notesel cdata
+						noteget btemp2,cnt
+						gets=strmid(btemp2,0,instr(btemp2,0,"	")):CharLower gets	// gets = HSP2 META DATA
+						gete=strmid(main,start,count-start):CharLower gete			// gete = Search DATA
+						getm=strmid(main,start,count-start)							// getm = Main DATA
+						cnt2=0	// META DATA の読み取り位置
+						cnt3=0	// Search Key DATA の読み取り位置
+						getcount=0
+						funcload=-1		// 正しく読んだかのチェック
+						repeat// strlen(gets)
+						if cnt3>(strlen(gete)-1):{
+							//
+							// HSP3 用の命令を構築して書き換える。
+							//
+							cnt2=strlen(gets)+1	// 処理が必要ないので、既存のデータを破壊して使用してもかまわない。
+							getstr gets,btemp2,strlen(gets)+1,'	'	// HSP3 変換用
+							cnt2=cnt2+strsize
+							getstr gete,btemp2,cnt2,'	'			// HSP3 条件
+							getcount=0
+							cnt3=0
+							testcount=""
+							repeat
+							cnt3=instr(gete,getcount,"%")
+							if cnt3=-1:break
+							getcount=getcount+cnt3
+							cnt3=0+strmid(gete,getcount+1,10)
+							if (cnt3>(length(ConvertDB)-1))|(cnt3<0):getcount=-1:break:else:testcount=ConvertDB(cnt3)
+							gete=strmid(gete,0,getcount)+testcount+strmid(gete,getcount+1+strlen(str(cnt3)),strlen(gete))
+							getcount=getcount+strlen(testcount)
+							loop
+							if getcount=-1:break
+							if CheckIF(gete)=1:{
+								// 条件式通過　コマンド変換を行う。
+								getcount=0
+								cnt3=0
+								testcount=""
+								repeat
+								cnt3=instr(gets,getcount,"%")
+								if cnt3=-1:break
+								getcount=getcount+cnt3
+								cnt3=0+strmid(gets,getcount+1,10)
+								if (cnt3>(length(ConvertDB)-1))|(cnt3<0)|(str(cnt3)!strmid(gets,getcount+1,strlen(str(cnt3)))):{
+									getcount=getcount+1
+								} else {
+									testcount=ConvertDB(cnt3)
+									gets=strmid(gets,0,getcount)+testcount+strmid(gets,getcount+1+strlen(str(cnt3)),strlen(gets))
+									getcount=getcount+strlen(testcount)
+								}
+								loop
+								// VBScript 処理
+								if (instr(gets,0,"[")!-1)&(instr(gets,0,"[")!-1):{
+									// 見つかれば、処理を行わせる。
+									cnt3=0		// 読み取り開始位置
+									getcount=0	// ダブルコーテーション判定
+									cnt2=0		// カウンタ
+									jyen=0
+									comma=0
+									repeat strlen(gets)
+									if IsJapanese(gets,cnt2):cnt2++:continue
+									if peek(gets,cnt2)=92:jyen=jyen^1:else:jyen=0
+									if peek(gets,cnt2)=39:comma=comma^1
+									if (peek(gets,cnt2)=34)&(jyen=0):getcount=getcount^1	// ダブルコーテーション
+									if (getcount=1)|(comma=1):cnt2++:continue
+									if (peek(gets,cnt2)='['):cnt3=cnt2	// 読み取り開始位置記憶
+									if (peek(gets,cnt2)=']'):{
+										testcount=strlen(gets)-1	// 現在の文字数を保持
+										gets=strmid(gets,0,cnt3)+EVal(strmid(gets,cnt3+1,cnt2-cnt3-1))+strmid(gets,cnt2+1,strlen(gets)-cnt2-1)
+										cnt2=cnt2+(strlen(gets)-testcount)	// 位置を修正
+									}
+									cnt2+
+									loop
+								}
+								// 完了したので書き込む
+								Main=strmid(main,0,start)+gets+strmid(main,count,strlen(main)-count)
+								count=(strlen(gets)-(count-start))+count
+								getcount=-2:break	// 処理終了を伝える
+							}
+							getcount=-1:break	// エラー等で、実行できなかった。
+						}
+							//
+							// 照合は
+							// Funcload = 1 か 0 かで判定する。
+							//
+							if peek(gets,cnt2)='%':{
+								// 引数代入
+								getcount=str(int(strmid(gets,cnt2+1,2)))
+								if strmid(gets,cnt2+1,strlen(getcount))=getcount:{
+									// % がキーワードではなく、変数表示だった場合　（ %のあとが番号でない場合)
+									cnt2=cnt2+strlen(getcount)+1
+									// 検索用のキーの抽出
+									repeat
+									if (cnt2+cnt)=strlen(gets):searchkey=strmid(gets,cnt2,cnt):break
+									if peek(gets,cnt2+cnt)='%':searchkey=strmid(gets,cnt2,cnt):break
+									loop
+									stack=0
+									testcount=0
+									getcount=int(getcount)
+									ConvertDB(getcount)=""
+									// キーに対しての、実際の読み出し位置を検出
+									funcload=0
+									if searchkey!"":{
+									repeat strlen(gete)
+									if peek(gete,cnt+cnt3)='(':stack+
+									if peek(gete,cnt+cnt3)=')':stack-
+									if stack!0:continue
+									if peek(gete,cnt+cnt3)=peek(searchkey,testcount):testcount+:else:testcount=0
+									if testcount=strlen(searchkey):Funcload=1:ConvertDB(getcount)=strmid(getm,cnt3,(cnt+1)-testcount):cnt3=cnt+cnt3:cnt2=cnt2+testcount-1:break
+									loop
+								} else {
+									//
+									// 末端を取得 
+									//
+									jyen=0:testcount=0:temp=0
+									if instr(getm,cnt3,",")!-1:{
+										repeat strlen(getm)-cnt3,cnt3
+										if IsJapanese(getm,cnt):continue
+										if peek(getm,cnt)=92:jyen=jyen^1:else:jyen=0
+										if (peek(getm,cnt)=34)&(jyen=0):testcount=testcount^1	// ダブルコーテーション
+										if peek(getm,cnt)=39:comma=comma^1
+										if (testcount=1)|(comma=1):continue
+										if peek(getm,cnt)=44:ConvertDB(getcount)=strmid(getm,cnt3,cnt-cnt3):temp=1:break
+										loop
+									}
+									if temp=0:ConvertDB(getcount)=strmid(getm,cnt3,strlen(getm)-cnt3)
+									cnt3=strlen(gete)
+									funcload=1
+								}
+								}
+							}
+							if Funcload=0:getcount=-1:break
+						cnt2+
+						cnt3+
+						loop
+						if getcount=-1:continue
+						if getcount=-2:break
+					}
+			}
+		loop
+	}
+	start=count		// 処理終了
+	return 
+	#global
+
+	
+	//
+	// Module:Convert_Main
+	// カーネルモジュールのコントロールユニット。
+	// プログラム自体は、このモジュールにアクセスし、
+	// このモジュールから、内部の変換ユニットにアクセスする。
+	//
+	
+	#module Convert_Main
+
+	#deffunc Memory_onload int Ccnv_,int Lcnv_,int Fcnv_,int Ecnv_,int Icnv_,int Acnv_,int convertspeed_,int fileoverwrite_,int mreftodeffunc,int insertundef,local pass,local temp,local sortdat,local tempd,local count,local temp2,local maxcount
+	//
+	// Memory_onload
+	// メモリ上に展開し、共通の処理を行う。
+	//
+	outx=ginfo(22)
+	outy=ginfo(23)
+	Ccnv=Ccnv_:Lcnv=Lcnv_:Fcnv=Fcnv_:Ecnv=Ecnv_:Icnv=Icnv_:Acnv=Acnv_:Mcnv=mreftodeffunc:Ncnv=insertundef
+	convertspeed=convertspeed_:fileoverwrite=fileoverwrite_
+	pass=dirinfo(0)
+	cdsysdir
+	if Ccnv=1:cpsload "Command",cdata:else:cdata=""
+	if Lcnv=1:cpsload "Label",ldata:else:ldata=""
+	if Acnv=1:cpsload "Insert",adata:else:adata=""
+	chdir pass
+
+	//
+	// cdata ソート 
+	// (引数数ソート）　
+
+	// １次ソート (ソートデータ作成）
+
+	//
+	// ソートデータの構造。
+	//
+	//　ソートデータは、まったく整理されていない。
+	//　　命令名の１文字目と引数の数だけが記録されている。
+	//　　あとは、それを見ながら再構築するだけ。
+	if cdata!"":{
+	sortdat=""
+	notesel cdata
+	repeat noteinfo(0)
+	// コメントをのぞく　（ゴミをのぞく）
+	noteget temp,cnt
+	if (strmid(temp,0,2)="//")|(strmid(temp,0,1)=";"):continue
+	temp=strmid(temp,0,instrr(temp,"	"))
+	noteadd temp,cnt,1
+	loop
+	
+	notesel cdata
+	repeat noteinfo(0)
+	notesel cdata
+	noteget tempd,cnt
+	count=0
+	if strmid(tempd,-1,1)!"	":count++	// 最後がTAB でない = VB評価キー存在
+	tempd=getpath(strmid(tempd,0,instr(tempd,0,"	")),16)
+	notesel sortdat
+	if instr(tempd,0," ")!-1:count++
+	repeat strlen(tempd)
+	if peek(tempd,cnt)=',':{
+		// データ評価
+		count++	// 基本１
+		temp=peek(tempd,cnt+1)
+		if ((temp!'%')&(temp!' ')):count++	// 検索キーが存在する
+	}
+	loop
+	if maxcount<count:maxcount=count
+	noteadd ""+count
+	loop
+	tempd=cdata
+	cdata=""
+	// ２次ソート
+	// 　再構築
+
+	//
+	// cdata or ecdata
+	//
+	
+	// cdata
+	repeat maxcount
+	notesel sortdat
+	repeat noteinfo(0)
+	notesel sortdat
+	noteget temp2,cnt
+	if int(temp2)=maxcount:notesel tempd:noteget temp2,cnt:notesel cdata:noteadd temp2
+	loop
+	maxcount=maxcount-1
+	loop
+	// ecdata
+	notesel sortdat
+	maxcount=0
+	repeat noteinfo(0)
+	notesel sortdat
+	noteget temp2,cnt
+	if int(temp2)=maxcount:notesel tempd:noteget temp2,cnt:notesel ecdata:noteadd temp2
+	loop
+} else :cdata="":ecdata=""
+	return
+	
+	#deffunc FileConvert str hsp2,str hsp3,str callfile,int progress,local undefdb,local start2,local ChangeData,local jyen,local temp,local waitcount,local koutid,local onefilecount,local onefci,local convertbroke,local outmestemp,local st,local result,local notconvert,local longout,local basecode,local callfile2,local incfile,local brace,local DQ,local start,local cnt2,local comma,local bindat
+	//
+	// FileConvert
+	// メインフロントエンド＆基本システム構築部分
+	// -> この命令と外部プログラムがやり取りして処理を行う。
+	//
+	// hsp2 - HSP2のファイルパス
+	// hsp3 - HSP3のファイルパス
+	// cnt2 - 現在の読み出し先のアドレス
+	// start - 切り出し先
+	// result - メインプログラムへの報告
+	// kernelout - 画面表示のハンドル (static コントロール使用）
+	// progress - プログレスバーのハンドルを与える。
+	//
+	// Brace - { }
+	// DQ    - " "
+	// comma - ' '
+	// longout - /* */
+	// notconvert - ; や // によってその行のそれ以降を無効化された場合に入れる。
+	//
+	oncmd 0
+	onkey 0
+	if callfile="":{
+	//
+	// 変換カーネル 親の初期化
+	//
+	//winobj "static","",0,$10000000|$40000000,400,200
+	CreateWindowEx 0,"Edit","",$10000000|$40000000|0x4|0x800,outx,outy,400,170,hwnd,0,0,0
+	kernelout=stat
+	rjumpopt 0,80
+	button gosub "キャンセル",*ConvertStop
+	kset kernelout
+	sendmsg kernelout,0x30,GetStockObject(17),1
+	onefilecount=-2
+} else {
+	pos outx,outy+180
+	winobj "msctls_progress32","",0,0x40000000|0x10000000|0x04000000,410,15
+	onefilecount=stat
+}
+	kcls
+	kmes "Mimura Software ソースコンバータ カーネルプログラム"
+	kmes " -- Convert -- "
+	if callfile!"":kmes ""+callfile:kmes " -- Include -- "
+	kmes ""+getpath(hsp2,8)
+	exist hsp2
+	if strsize=-1:clrobj onefilecount,onefilecount:return	// ファイルがアクセスできなかったら、死刑。
+	
+#ifdef debug
+	kmes "DEBUG MODE.."
+	kmes " INPUT:"+HSP2+"\nOutPut:"+HSP3
+#endif
+
+	// Kernel Init.
+	start=0
+	cnt2=0
+	result=""
+	basecode=""
+	start2=-1
+	sdim UNDEFDB,1024
+	notesel basecode
+	noteload hsp2
+	memexpand basecode,strlen(basecode)+100
+	VB_Script_Init				// VBScript を使用可能に。
+	VB_FirstRun basecode		// VBの最初のコール
+	CALL_AND_MAKE_INIT basecode
+#ifdef debug
+	st=timegettime():kmes "Bench Start at:"+st
+#endif
+	repeat
+	if onefilecount>=0:{
+	sendmsg objinfo(onefilecount,2),PBM_SETRANGE32,0,strlen(basecode)
+	sendmsg objinfo(onefilecount,2),PBM_SETPOS,cnt2,0
+	} else {
+	sendmsg progress,PBM_SETRANGE32,0,strlen(basecode)
+	sendmsg progress,PBM_SETPOS,cnt2,0
+	}
+	if convertbroke=1:break
+	//title ""+(cnt2+1)+" / "+strlen(basecode)+" - "+((cnt2+1)*100/strlen(basecode))+"%"
+	result=str(result)
+	if result!"":{
+		//
+		// 変換カーネルからの処理メッセージ。
+		//
+		
+		//
+		// 処理メッセージ
+		//  #include - SubCall
+		//
+		switch strmid(result,0,instr(result,0,":"))
+			case "ADD UNDEFDB"
+				result = strmid(result,instr(result,0,":")+1,32765)
+				notesel undefdb
+				noteadd result
+			swbreak
+			
+			case "SubCall"
+				temp=instr(result,0,":")+1
+				incfile=strmid(result,temp,instr(result,temp,":"))
+				if instr(incfile,0,":")=-1:incfile=getpath(hsp2,32)+incfile
+				callfile2=callfile
+				notesel callfile2
+				noteadd getpath(hsp2,8)
+				sendmsg kernelout,0xE,0,0
+				sdim outmestemp,stat+256
+				sendmsg kernelout,0xD,stat+256,varptr(outmestemp)
+				exist incfile+".hsp"
+				if (fileoverwrite=3)|(strsize=-1):{
+					exist incfile
+					if strsize>0:{
+					FileConvert incfile,""+getpath(hsp3,32)+"\\"+getpath(incfile,3+8)+".hsp",callfile2,0
+					CALL_AND_MAKE_INIT basecode
+				} else {
+					temp=int(strmid(result,instr(result,temp,":")+1+temp,strlen(result)))
+					basecode=strmid(basecode,0,temp)+strmid(basecode,temp+4,strlen(basecode))
+					cnt2=cnt2-3
+				}
+				}
+				if stat=-1:convertbroke=1:break
+				kcls
+				kmes outmestemp
+				result=""
+			swbreak
+		swend
+	}
+	result=""
+	if cnt2>strlen(basecode){
+		if longout=0:ReadandMake basecode,start,cnt2,result
+		break
+	}
+	if IsJapanese(basecode,cnt2):cnt2+:continue
+	
+	// 改行処理
+	if (bindat=13)|(bindat=10):{
+		comma=0
+		if notconvert=1:notconvert=0:start=cnt2
+		if (dq=1)&(brace=1):dq=1:else:{
+		dq=0
+		if longout=0:{
+			if start2!-1:temp=start2:ReadandMake basecode,start,start2,result:cnt2=cnt2+(temp-start2):start2=-1:brace=0:start=start+1
+			ReadandMake basecode,start,cnt2,result
+		}
+		if peek(basecode,cnt2) = 13:cnt2++
+		if peek(basecode,cnt2) = 10:cnt2++
+		start = cnt2
+	}
+	}
+	bindat=peek(basecode,cnt2)
+	if notconvert=1:cnt2+:await 0:continue		// ; や // で無効化されて、次の行を待つ。
+	if bindat=92:jyen=jyen^1:else:jyen=0	// \ マークカウンタ
+	if (dq=0)&(comma=0)&(longout=0):{	// ダブルコーテーション " " およびカンマ。
+		//
+		// 禁止文字が入っていない (通常モード)
+		//
+		if bindat=59:ReadandMake basecode,start,cnt2,result:notconvert=1					// ; が認識された。
+		if (cnt2+2)<strlen(basecode):if wpeek(basecode,cnt2)=12079:ReadandMake basecode,start,cnt2,result:notconvert=1	// // が認識された。
+		if (cnt2+2)<strlen(basecode):if wpeek(basecode,cnt2)=10799:ReadandMake basecode,start,cnt2,result:longout=1
+		if (bindat=34)&(jyen=0):dq=1
+		if bindat=39:comma=1
+		//if brace=1:if (bindat!' ')&(bindat!'	')&(bindat!'""'):brace=0
+		if bindat=':':{
+			if start2!-1:temp=start2:ReadandMake basecode,start,start2,result:cnt2=cnt2+(temp-start2):start2=-1:brace=0:start=start+1
+			ReadandMake basecode,start,cnt2,result
+			start+
+		}
+		if bindat='{':brace=1:start2=cnt2
+		if bindat='}':brace=0:if start2!-1:ReadandMake basecode,start2,cnt2,result:start2=-1
+	} else {
+	//
+	// 禁止文字を検出　（制限モード）
+	//
+	// ブロックしているものだけ、解除コードの監視を行う。
+	if (dq=1)&(bindat=34)&(jyen=0):dq=0
+	if (comma=1)&(bindat=39):comma=0
+	if (longout=1)&(wpeek(basecode,cnt2)=12074):start=cnt2:longout=0		// */ (長期無効化 末端）
+}
+	cnt2+
+	await 0
+	if countspeed=1:waitcount+
+	if (ConvertSpeed=1)&(waitcount>5):Sleep 1:waitcount=0
+	if ConvertSpeed=2:Sleep 1
+	loop
+	if convertbroke=1:{
+	if onefilecount>-1:clrobj onefilecount,onefilecount
+	if onefilecount=-2:DestroyWindow kernelout
+	return -1	// 変換処理キャンセル
+}
+
+	kmes "最終変換処理の準備をしています.."
+
+	ChangeData=basecode
+	dq=0:notconvert=0:longout=0:jyen=0:cnt2=0
+	repeat strlen(basecode)
+	bindat=peek(basecode,cnt)
+	if IsJapanese(basecode,cnt)=1:continue
+	// 改行処理
+	if (bindat=13)|(bindat=10):{
+		comma=0:notconvert=0
+		if (dq=1)&(brace=1):dq=1:dq=0
+		continue
+	}
+	if bindat=92:jyen=jyen^1:else:jyen=0
+	if (dq=0)&(comma=0)&(longout=0)&(notconvert=0):{
+		if bindat=59:notconvert=1:poke changedata,cnt,160					// ; 
+		if wpeek(basecode,cnt)=12079:notconvert=1:poke changedata,cnt,160	// //
+		if (bindat=34)&(jyen=0):dq=1:poke changedata,cnt,160				// "
+		if bindat=39:comma=1:poke changedata,cnt,160						// カンマ
+		if wpeek(basecode,cnt)=10799:longout=1:poke changedata,cnt,160
+		cnt2=0
+	} else {
+	poke changedata,cnt,160
+	if notconvert=1:continue
+	if (dq=1)&(bindat=34)&(jyen=0):dq=0
+	if (comma=1)&(bindat=39):comma=0
+	if (longout=1)&(wpeek(basecode,cnt)=12074):longout=0		// */ (長期無効化 末端）
+	cnt2=1
+}
+	loop
+
+	kmes "最終変換処理を行っています..."
+	
+	notesel ecdata
+	repeat noteinfo(0)
+	if convertbroke=1:break
+	noteget temp,cnt
+	outmestemp=strmid(temp,0,instr(temp,0,"	"))
+	jyen=strmid(temp,strlen(outmestemp)+1,instr(temp,strlen(outmestemp)+1,"	"))
+	cnt2=0
+	repeat
+	if instr(changedata,cnt2,outmestemp)=-1:break
+	temp=instr(changedata,cnt2,outmestemp)+cnt2
+	if temp>0:bindat=peek(changedata,temp-1):else:bindat=0
+	if ((bindat<38)&(bindat>33))|(bindat=39)|((bindat<58)&(bindat>47))|((bindat>62)&(bindat<91))|((bindat>94)&(bindat<123))|(bindat=126):cnt2=temp+strlen(outmestemp)+1:continue
+	if temp>0:bindat=peek(changedata,temp+strlen(outmestemp)):else:bindat=0
+	if ((bindat<38)&(bindat>33))|(bindat=39)|((bindat<58)&(bindat>47))|((bindat>62)&(bindat<91))|((bindat>94)&(bindat<123))|(bindat=126):cnt2=temp+strlen(outmestemp)+1:continue
+	changedata=strmid(changedata,0,temp)+jyen+strmid(changedata,temp+strlen(outmestemp),strlen(changedata))
+	basecode=strmid(basecode,0,temp)+jyen+strmid(basecode,temp+strlen(outmestemp),strlen(basecode))
+	cnt2=temp+strlen(jyen)+1
+	await 0
+	loop
+	loop
+
+	// #undef 挿入
+	if undefdb != "" : basecode = "// --- Insert 'undef'\n"+undefdb+"// ---\n\n"+basecode
+#ifdef debug
+	kmes "Bench Time at:"+(timegettime()-st)
+#endif
+	if (onefilecount=-2)&(acnv=1)&(adata!""):basecode="// UserModule\n"+adata+"\n// Usermodule Fin.\n\n"+basecode	// ユーザーモジュール
+	VB_LastRun	basecode // VBの最終コール
+	VB_Script_Finish		// VBScript 使用終了
+	kmes "Finish."
+	if onefilecount>-1:clrobj onefilecount,onefilecount
+	if onefilecount=-2:DestroyWindow kernelout
+	notesel basecode
+	notesave hsp3
+	oncmd 1
+	onkey 1
+	return 0
+*ConvertStop
+	convertbroke=1
+	return
+	#global

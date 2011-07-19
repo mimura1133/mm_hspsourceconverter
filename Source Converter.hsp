@@ -1,0 +1,940 @@
+	//
+	//	Mimura Software ソースコンバータ２
+	//				開発ソース
+	//
+	// 制作者一覧
+	//　Main:Mimura
+	// Advanced Mode:＠神無月さん
+	//
+	#packopt hide 1
+	#packopt name "ソースコンバータ２"
+	#cmpopt optcode 1
+	#cmpopt optinfo 1
+	#define global ver "2.061"
+	pos 5,5
+	font "",12
+	#include "Source_Func_mes.hsp"			// API設定 / ウインドウメッセージ設定 に関するモジュール
+	#include "Source_Function.hsp"			// 汎用関数
+	#include "Source_SETFILE.hsp"			// 定義ファイル操作モジュール
+	sysdirset
+	tcheck
+	#include "Source_Window.hsp"			// Window 設定
+	#include "Source_Convert_Kernel.hsp" 	// ソースコンバータ カーネルソース
+	#include "Source_FileEditor.hsp"		// 設定ファイルエディタ
+	
+	title "Mimura Software ソースコンバータ２ "+ver
+	sdim HSP2,200
+	sdim HSP3,200
+	sdim HSP2F,200
+	sdim HSP3F,200
+	sdim hsp2code,10240
+	//
+	// 設定ファイル読み込み　ここから
+	//
+	modesel=M_load("FirstMode")
+	Bootmode=M_load("BootMode")
+	CommandConvert=int(M_load("CommandConvert"))
+	LabelConvert=int(M_Load("LabelConvert"))
+	FuncConvert=int(M_Load("FuncConvert"))
+	ExpressionConvert=int(M_Load("ExpressionConvert"))
+	IncludeConvert=int(M_Load("IncludeConvert"))
+	InsertModule=int(M_Load("InsertModule"))
+	mrefTodeffunc=int(M_Load("mrefTodeffunc"))
+	Insertundef=int(M_Load("Insertundef"))
+	UseVBScript=int(M_Load("UseVBScript"))
+	RunScriptFirst=int(M_Load("RunScriptFirst"))
+	RunScriptLast=int(M_Load("RunScriptLast"))
+	ConvertSpeed=int(M_Load("ConvertSpeed"))
+	FileOverwrite=int(M_Load("Overwrite"))
+	//
+	// 設定ファイル読み込み　ここまで
+	//
+
+	//
+	// 初期化　ここから
+	//
+
+	// 共通設定
+	gsel 0,1
+	oncmd gosub *Finish,WM_CLOSE
+	oncmd gosub *MenuToGo, $111
+	onkey gosub *HotKey
+	
+	//
+	//	定義ファイル操作  ID:100 ～ 119
+	//　変換オプション    ID:110 ～ 119
+	//
+	hoptions=CreatePopupMenu()
+	
+	hfilecontrol=CreatePopupMenu()
+	AppendMenu hfilecontrol,,100,"命令変換"
+	AppendMenu hfilecontrol,,101,"ラベル修正"
+	AppendMenu hfilecontrol,,102,"ユーザーモジュール"
+	AppendMenu hfilecontrol,,103,"VBScript (WSH) モジュール"
+	AppendMenu hfilecontrol,$800,,""
+	AppendMenu hfilecontrol,,104,"ソフトウェア設定ファイル"
+	AppendMenu hfilecontrol,$800,,""
+	AppendMenu hfilecontrol,,105,"定義ファイルを初期化"
+	AppendMenu hoptions,$10,hfilecontrol,"ファイル操作"
+
+	hwshoptions=CreatePopupMenu()
+	AppendMenu hwshoptions,$8,120,"VBScript モジュールを使用する"
+	CheckMenuItem hwshoptions,120,UseVBScript*8
+	AppendMenu hwshoptions,$8,121,"変換前に 命令:FirstRun を実行する"
+	CheckMenuItem hwshoptions,121,RunScriptFirst*8
+	AppendMenu hwshoptions,$8,122,"変換後に 命令:LastRun を実行する"
+	CheckMenuItem hwshoptions,122,RunScriptLast*8
+
+	hconvertspeed=CreatePopupMenu()
+	AppendMenu hconvertspeed,$8,125,"高速動作 (CPU 負荷最大）"
+	AppendMenu hconvertspeed,$8,126,"バランス (CPU 負荷半分）"
+	AppendMenu hconvertspeed,$8,127,"低速動作 (CPU 負荷最低）"
+	CheckMenuRadioItem hconvertspeed,0,2,ConvertSpeed,MF_BYPOSITION
+
+	hOverwriteoption=CreatePopupMenu()
+	AppendMenu hOverwriteoption,$8,130,"対象ファイルの上書きの可否を問い、それ以外は上書きしない"
+	AppendMenu hOverwriteoption,$8,131,"上書きを行わない"
+	AppendMenu hOverwriteoption,$8,132,"対象のファイルのみ上書きを行えるようにする"
+	AppendMenu hOverwriteoption,$8,133,"Include 先なども含め、すべてのファイルにできるようにする"
+	CheckMenuRadioItem hOverwriteoption,0,3,FileOverwrite,MF_BYPOSITION
+	
+	hconvertoptions=CreatePopupMenu()
+	AppendMenu hconvertoptions,$8,110,"命令変換"
+	CheckMenuItem hconvertoptions,110,CommandConvert*8
+	AppendMenu hconvertoptions,$8,111,"ラベル修正"
+	CheckMenuItem hconvertoptions,111,LabelConvert*8
+	AppendMenu hconvertoptions,$8,112,"#Func 修正"
+	CheckMenuItem hconvertoptions,112,FuncConvert*8
+	AppendMenu hconvertoptions,$8,113,"数式修正"
+	CheckMenuItem hconvertoptions,113,ExpressionConvert*8
+	AppendMenu hconvertoptions,$8,114,"#Include / #addition 探索"
+	CheckMenuItem hconvertoptions,114,IncludeConvert*8
+	AppendMenu hconvertoptions,$8,116,"#deffunc 命令の引数を mref 命令から読み取って修正"
+	CheckMenuItem hconvertoptions,116,mreftodeffunc*8
+	AppendMenu hconvertoptions,$8,117,"#deffunc 命令の前に #undef 命令を入れる"
+	CheckMenuItem hconvertoptions,117,insertundef*8
+	AppendMenu hconvertoptions,$8,115,"ユーザーモジュール挿入"
+	CheckMenuItem hconvertoptions,115,InsertModule*8
+	AppendMenu hconvertoptions,$800,,""
+	AppendMenu hconvertoptions,$10,hwshoptions,"VBScript (WSH)"
+	AppendMenu hconvertoptions,$800,,""
+	AppendMenu hconvertoptions,$10,hconvertspeed,"変換速度"
+	AppendMenu hconvertoptions,$10,hoverwriteoption,"上書き設定"
+	AppendMenu hconvertoptions,$800,,""
+	AppendMenu hconvertoptions,,118,"推奨オプションを入れる"
+	AppendMenu hoptions,$10,hconvertoptions,"変換オプション"
+	
+	//
+	// 初期化　ここまで
+	//
+	
+	//
+	// ラベルの名前付けの法則
+	//
+	// *W～ - ウインドウモード
+	// *M～ - Advanced Mode.
+	//
+
+	//
+	// ブートセレクト
+	//
+	objmode 1,0
+*WindowReturn
+	if bootmode=0:goto *M:else:goto *W
+	stop
+*MenuToGo
+
+	//
+	// --------------------------------------------------------------------------------------
+	//
+	// 以下、メニュー項目の処理
+	//
+	if lparam != 0 : return		// 用がないなら処理をしない。
+	menuid=wparam& $FFFF
+	//	定義ファイル操作  ID:100 ～ 109
+
+	if (menuid<110)&(menuid>99):{
+		if menuid=100:Command_Edit
+		if menuid=101:Label_Edit
+		if menuid=102:Module_Edit
+		if menuid=103:WSHModule_Edit
+		if menuid=104:Software_Edit
+		if menuid=105:dialog "定義ファイルがすべてリリース時のものになりますが、\nよろしいですか？",3,"ソースコンバータ 定義ファイルコントローラ - 警告":{
+			if stat=6:cdsysdir:tcheck 1
+		} else :return
+	}
+	
+	//　変換オプション    ID:110 ～ 139
+	
+	if (menuid<140)&(menuid>109):{
+		if menuid=110:CommandConvert=Commandconvert^1:CheckMenuItem hconvertoptions,110,CommandConvert*8:M_SAVE "CommandConvert",""+CommandConvert
+		if menuid=111:LabelConvert=LabelConvert^1:CheckMenuItem hconvertoptions,111,LabelConvert*8:M_SAVE "LabelConvert",""+LabelConvert
+		if menuid=112:FuncConvert=FuncConvert^1:CheckMenuItem hconvertoptions,112,FuncConvert*8:M_SAVE "FuncConvert",""+FuncConvert
+		if menuid=113:ExpressionConvert=ExpressionConvert^1:CheckMenuItem hconvertoptions,113,ExpressionConvert*8:M_SAVE "ExpressionConvert",""+ExpressionConvert
+		if menuid=114:IncludeConvert=IncludeConvert^1:CheckMenuItem hconvertoptions,114,IncludeConvert*8:M_SAVE "IncludeConvert",""+IncludeConvert
+		if menuid=115:InsertModule=InsertModule^1:CheckMenuItem hconvertoptions,115,InsertModule*8:M_SAVE "InsertModule",""+InsertModule
+		if menuid=116:mrefTodeffunc=mrefTodeffunc^1:CheckMenuItem hconvertoptions,116,mrefTodeffunc*8:M_SAVE "mrefTodeffunc",""+mrefTodeffunc
+		if menuid=117:Insertundef=Insertundef^1:CheckMenuItem hconvertoptions,117,Insertundef*8:M_SAVE "Insertundef",""+Insertundef
+
+		if menuid=118:dialog "動作設定が推奨値に設定されます。\nよろしいですか？",2:if stat=7:menuid=110
+		if menuid=118:{
+		//
+		// 推奨モード ON
+		//
+		// (命令変換、ラベル修正、#func修正、数式修正　がONになり、変換速度は「バランス」、上書き設定は「しない」になる。）
+		//
+				CommandConvert=1
+				LabelConvert=1
+				FuncConvert=1
+				ExpressionConvert=1
+				IncludeConvert=1
+				InsertModule=0
+				UseVBScript=0
+				RunScriptFirst=0
+				RunScriptLast=0
+				FileOverwrite=0
+				ConvertSpeed=1
+				mrefTodeffunc=1
+				Insertundef=0
+				
+				gosub *SettingToMenu:gosub *SettingAllSaves
+		}
+		if menuid=120:UseVBScript=UseVBScript^1:CheckMenuItem hwshoptions,120,UseVBScript*8:M_SAVE "UseVBScript",""+UseVBScript
+		if menuid=121:RunScriptFirst=RunScriptFirst^1:CheckMenuItem hwshoptions,121,RunScriptFirst*8:M_SAVE "RunScriptFirst",""+RunScriptFirst
+		if menuid=122:RunScriptLast=RunScriptLast^1:CheckMenuItem hwshoptions,122,RunScriptLast*8:M_SAVE "RunScriptLast",""+RunScriptLast
+		if (menuid>124)&(menuid<128):{
+			// 速度設定
+			ConvertSpeed=menuid-125
+			CheckMenuRadioItem hconvertspeed,0,2,ConvertSpeed,MF_BYPOSITION
+			M_SAVE "ConvertSpeed",""+convertspeed
+		}
+		if (menuid>129)&(menuid<134):{
+			// 上書き設定
+			FileOverwrite=menuid-130
+			CheckMenuRadioItem hOverwriteoption,0,3,FileOverwrite,MF_BYPOSITION
+			M_SAVE "Overwrite",""+FileOverWrite
+		}
+	}
+	return
+	//
+	// -------------------------------------------------------------------------------------
+	//
+	// 以下、メインモード
+	//
+
+*M
+	WindowInit 510,328
+	WWID=-1
+	Bootmode=0
+	gosub *SettingAllSaves
+	hspnextb=0:hsp2hwnd2=0
+	gsel 0,1
+*M1
+	//
+	// Advanced Mode. 
+	//
+	clrobj 0,-1
+	WindowMake "ソースコンバータ２　アドバンスドモード","熟練者向けに、設定を一括で行えるようにしたウィンドウです。"
+	pos 0,ginfo(23)
+	winobj "systabcontrol32", "", , $52000000,510,120
+	hTab = objinfo (stat, 2)
+	sendmsg htab,0x0030,GetStockObject(17),1
+
+	//
+	// --------------------------------------------------------------------------
+	// TAB1
+	//
+	
+	InsertTab htab,0,"ファイル変換モード"
+	pos 5,5
+	objsize 22,22
+	normalcls
+	sysfont 17
+	mes "変換元（HSP2 ソース）:"
+	input hsp2,470,22
+	hsp2hwnd=objinfo(stat,2)
+	pos 475,ginfo(23)-22
+	button "...",*H2Load
+	pos 5,ginfo(23)
+	mes ""
+	mes "変換先（HSP3 ソース）:"
+	input hsp3,470,22
+	hsp3hwnd=objinfo(stat,2)
+	pos 475,ginfo(23)-22
+	button "...",*H2Save
+
+	//
+	// --------------------------------------------------------------------------
+	// TAB2
+	//
+	
+	InsertTab htab,1,"ディレクトリ変換モード"
+	pos 5,5
+	objsize 22,22
+	normalcls
+	sysfont 17
+	mes "変換元（HSP2 ソースディレクトリ）:"
+	if hsp2!"":hsp2f=getpath(hsp2,32)+"*"+strmid(hsp2,instr(hsp2,0,"."),strlen(hsp2)-instr(hsp2,0,".")):else:hsp2f=""
+	input hsp2f,470,22
+	hsp2fhwnd=objinfo(stat,2)
+	pos 475,ginfo(23)-22
+	button "...",*H2FLoad
+	pos 5,ginfo(23)
+	mes ""
+	mes "変換先（HSP3 ソースディレクトリ）:"
+	if hsp3!"":hsp3f=getpath(hsp3,32)+"*"+strmid(hsp3,instr(hsp3,0,"."),strlen(hsp3)-instr(hsp3,0,".")):else:hsp3f=""
+	input hsp3f,470,22
+	hsp3fhwnd=objinfo(stat,2)
+	pos 475,ginfo(23)-22
+	button "...",*H2FSave
+
+	//
+	// --------------------------------------------------------------------------
+	// TAB3
+	//
+	
+	InsertTab htab,2,"テキスト変換モード"
+	pos 5,5
+	normalcls
+	sysfont 17
+	mes "変換するスクリプトを入力（HSP2 スクリプト／ 出力先：temp.hsp）:"
+
+	mesbox hsp2code,490,70
+
+	gsel 0,1
+	
+	//
+	// -----------------------------------------------------
+	//
+	// 共通オプション
+	//
+	#define AdvancedModeOptionHeight 64
+	
+	objsize 110,20
+	pos 10,120+AdvancedModeOptionHeight
+	chkbox "命令変換",CommandConvert
+	chkbox "ラベル修正",LabelConvert
+	chkbox "#Func 修正",FuncConvert
+	chkbox "数式変換",ExpressionConvert
+	objsize 180,20
+	pos 122,120+AdvancedModeOptionHeight
+	chkbox "#include, #addition 探索",IncludeConvert
+	chkbox "#deffunc, mref 文法修正",mreftodeffunc
+	chkbox "#deffunc の前に #undef を挿入",insertundef
+	chkbox "ユーザーモジュール挿入",InsertModule
+	pos 304,120+AdvancedModeOptionHeight
+	objsize 200,20
+	chkbox "VBScript モジュールの使用",UseVBScript
+	chkbox "処理前に 'FirstRun' を実行",RunScriptFirst
+	chkbox "処理後に 'LastRun' を実行",RunScriptLast
+	pos 10,200+AdvancedModeOptionHeight
+	objsize 250,20
+	combox fileoverwrite,100,"対象ファイルのみ、許可された場合上書きをする\n上書きを行わない\n対象のファイルのみ、上書きを許可\nすべてのファイルに上書きを許可する"
+	pos 300,200+AdvancedModeOptionHeight
+	objsize 150,20
+	combox ConvertSpeed,100,"最速で実行する\n速度と負荷を半々にする\n負荷を押さえて実行する"
+	ljumpopt 0,80
+	button "ファイル操作",*M3
+	m_opt_hwnd=objinfo(stat,2)
+	rjumpopt 1,90
+	button "変換開始(&S)>",*M2
+	sendmsg objinfo (stat, 2), $F4 , $1
+	rjumpopt 0,80
+	button gosub "キャンセル(&C)",*Cancel
+	ljumpopt 1,80
+	button "&Wizard.",*M_GOTO_W
+
+	oncmd gosub *M_WM_NOTIFY,$4E
+	modesel=int(modesel)
+	sendmsg htab,0x130C,modesel,0:gsel 100+modesel,2
+	gsel 0,1
+	stop
+
+*M2
+	//今開いているタブに応じて、変換内容を変える分岐点
+	gsel 0,1:pos 0,0	//　場所を修正
+	gosub *SettingAllSaves
+	if modesel=0 : goto *W3_F
+	if modesel=1 : goto *W3_D
+	if modesel=2 : goto *W3_T 
+	stop
+
+*M3
+	//定義ファイルいじるエディタを起動させる。
+	// w_opt_hwnd=objinfo(stat,2)
+	dim rect,4
+	GetWindowRect m_opt_hwnd,varptr (RECT)
+	TrackPopupMenu hfilecontrol,$20,RECT(0),RECT(1),,hwnd
+	stop
+	
+*M_WM_NOTIFY
+	dupptr NMHDR,lparam,12
+	if nmhdr(2)=-551:gosub *TABCH
+	return
+
+*M_GOTO_W
+	gsel 100,-1
+	Setparent hwnd,0
+	gsel 101,-1
+	Setparent hwnd,0
+	gsel 102,-1
+	Setparent hwnd,0
+	gsel 0,1
+	goto *W
+
+*TABCH
+	gsel 100+modesel,-1
+	sendmsg htab,0x130B,0,0
+	gsel 100+stat,2
+	modesel=stat
+	return
+
+	//
+	// -------------------------------------------------------------------------------------
+	//
+	// 以下、ウィザードモード区画
+	//
+*W
+	WindowInit 510,328
+	Bootmode=1
+	gosub *SettingAllSaves:gosub *SettingToMenu
+*W1
+	//
+	// *W1
+	// 変換モードの指定
+	//
+	// modesel -> モード選択
+	//
+	redraw 0
+	clrobj 0,-1
+	WindowMake "ウィザードモード - 処理選択","どの様な処理を行うのかを選択します"
+	objsize 200,22
+	mes "変換モード設定："
+	mes ""
+	button "ファイル変換 (&O)",*W1_F
+	W1_F_hwnd=objinfo(stat,2)
+	sendmsg W1_F_HWND, $F4, $9
+	if modesel=0:sendmsg W1_F_HWND,$f1,1,0
+	mes "　　ファイル単位でのソースの変換を行います。"
+	mes "　　特定のプログラムソースを変換する場合に向いています。"
+	mes ""
+	button "フォルダ変換 (&F)",*W1_D
+	W1_D_hwnd=objinfo(stat,2)
+	sendmsg W1_D_HWND,$F4,$9
+	if modesel=1:sendmsg W1_D_HWND,$f1,1,0
+	mes "	フォルダ単位でのソースの変換を行います。"
+	mes "	開発用フォルダの内容などを一括で変換する場合に向いています。"
+	mes ""
+	button "テキスト変換 (&T)",*W1_T
+	W1_T_hwnd=objinfo(stat,2)
+	sendmsg W1_T_HWND, $F4, $9
+	if modesel=2:sendmsg W1_T_HWND,$f1,1,0
+	mes "　　テキスト単位での変換を行います。"
+	mes "　　ウェブ上のサンプルスクリプトの変換等に向いています。
+	mes ""
+	rjumpopt 0,80
+	button gosub "キャンセル(&C)",*Cancel
+	rjumpopt 1,90
+	button "次へ(&N)>",*W2
+	sendmsg objinfo (stat, 2), $F4 , $1
+	rjumpopt 2,90
+	button "<前へ(&B)",*W1
+	Enablewindow objinfo(stat,2),0
+	ljumpopt 0,80
+	button "オプション",*W_Options
+	w_opt_hwnd=objinfo(stat,2)
+	ljumpopt 1,80
+	button "&Advanced.",*M
+	redraw 1
+	WWID=0
+	stop
+
+	//
+	// ラジオボタン選択肢用
+	//
+
+*W1_F
+	modesel=0
+	M_Save "FirstMode",""+modesel
+	sendmsg W1_T_HWND,$f1,0,0
+	sendmsg W1_F_HWND,$f1,1,0
+	sendmsg W1_D_HWND,$f1,0,0
+	stop
+*W1_D
+	modesel=1
+	M_Save "FirstMode",""+modesel
+	sendmsg W1_D_HWND,$f1,1,0
+	sendmsg W1_T_HWND,$f1,0,0
+	sendmsg W1_F_HWND,$f1,0,0
+	stop
+*W1_T
+	modesel=2
+	M_Save "FirstMode",""+modesel
+	sendmsg W1_T_HWND,$f1,1,0
+	sendmsg W1_F_HWND,$f1,0,0
+	sendmsg W1_D_HWND,$f1,0,0
+	stop
+
+	
+*W2
+	//
+	// *W2
+	//
+	// modesel による判定
+	//
+	redraw 0
+	clrobj 0,-1
+	switch modesel
+	case 0
+	goto *W2_F
+	case 1
+	goto *W2_D
+	case 2
+	goto *W2_T
+	swend
+	stop
+
+*W2_F
+	//
+	// *W2_F
+	//
+	// ウィザードモード - ファイル選択画面
+	//
+	WindowMake "ファイル選択","変換対象のファイルと、変換結果の保存先を指定します。"
+	mes ""
+	mes "変換対象のファイル	（HSP2 で記述されたファイル）："
+	input hsp2,430,22
+	hsp2hwnd=objinfo(stat,2)
+	pos ginfo(22)+430,ginfo(23)-22
+	objsize 40,22
+	button "開く...",*h2load
+	hsp2hwnd2=objinfo(stat,2)
+	sendmsg hsp2hwnd2,$F4,$1
+	pos ginfo(22)-430,ginfo(23)
+	mes ""
+	mes "変換結果の保存先	（HSP3 に変換されたファイル）："
+	input hsp3,430,22
+	hsp3hwnd=objinfo(stat,2)
+	pos ginfo(22)+430,ginfo(23)-22
+	objsize 40,22
+	button "保存...",*h2save
+	pos ginfo(22)-430,ginfo(23)
+	rjumpopt 0,80
+	button gosub "キャンセル(&C)",*Cancel
+	rjumpopt 1,90
+	button "変換開始(&S)>",*W3_F
+	hspnextb=objinfo(stat,2)
+	rjumpopt 2,90
+	button "<前へ(&B)",*W1
+	ljumpopt 0,80
+	button "オプション",*W_Options
+	w_opt_hwnd=objinfo(stat,2)
+	WWID=1
+	redraw 1
+	stop
+	
+*W2_D
+	//
+	// *W2_D
+	//
+	// ウィザードモード - ディレクトリ選択画面
+	//
+	WindowMake "フォルダ選択","対象のファイルが入ったフォルダと変換結果の保存先を指定します。"
+	mes ""
+	mes "変換対象のファイルのあるフォルダ	（HSP2で記述されたファイルがあるフォルダ）"
+	if hsp2!"":hsp2f=getpath(hsp2,32)+"*"+strmid(hsp2,instr(hsp2,0,"."),strlen(hsp2)-instr(hsp2,0,".")):else:hsp2f=""
+	input hsp2f,430,22
+	hsp2fhwnd=objinfo(stat,2)
+	pos ginfo(22)+430,ginfo(23)-22
+	objsize 40,22
+	button "開く...",*h2Fload
+	hsp2hwnd2=objinfo(stat,2)
+	sendmsg hsp2hwnd2,$F4,$1
+	pos ginfo(22)-430,ginfo(23)
+	mes ""
+	mes "変換結果を保存するフォルダ		（変換されたファイルが保存されるフォルダ）"
+	if hsp3!"":hsp3f=getpath(hsp3,32)+"*"+strmid(hsp3,instr(hsp3,0,"."),strlen(hsp3)-instr(hsp3,0,".")):else:hsp3f=""
+	input hsp3f,430,22
+	hsp3fhwnd=objinfo(stat,2)
+	pos ginfo(22)+430,ginfo(23)-22
+	objsize 40,22
+	button "保存...",*h2Fsave
+	pos ginfo(22)-430,ginfo(23)
+	rjumpopt 0,80
+	button gosub "キャンセル(&C)",*Cancel
+	rjumpopt 1,90
+	button "変換開始(&S)>",*W3_D
+	hspnextb=objinfo(stat,2)
+	rjumpopt 2,90
+	button "<前へ(&B)",*W1
+	ljumpopt 0,80
+	button "オプション",*W_Options
+	w_opt_hwnd=objinfo(stat,2)
+	redraw 1
+	WWID=2
+	stop
+	
+*W2_T
+	//
+	// *W2_T
+	//
+	// ウィザードモード - テキスト入力画面
+	//
+	WindowMake "テキスト入力画面","変換するスクリプトを入力します"
+	mes "変換するスクリプトを入力してください  (出力先：temp.hsp)"
+	mes ""
+	pos 380,ginfo(23)-30
+	objsize 100,22
+	button "クリア",*W2_CL
+	pos 20,ginfo(23)
+	mesbox hsp2code,460,160,5
+	rjumpopt 0,80
+	button gosub "キャンセル(&C)",*Cancel
+	rjumpopt 1,90
+	button "変換開始(&S)>",*W3_T
+	rjumpopt 2,90
+	button "<前へ(&B)",*W1
+	ljumpopt 0,80
+	button "オプション",*W_Options
+	w_opt_hwnd=objinfo(stat,2)
+	redraw 1
+	objsel 2
+	WWID=3
+	stop
+*W2_CL
+	objprm 2,""
+	objsel 2
+	stop
+*W3_D
+	dirlist hsp2list,hsp2f
+	if hsp2list="":dialog "変換元に指定されている場所には、ファイルが存在しません。\n条件を指定し直してください":stop
+	redraw 0
+	if Bootmode=0:ReleaseTab 3
+	clrobj 0,-1
+	WindowMake "フォルダ一括変換 - 作業中","Input  :"+hsp2f+"\n	Output :"+hsp3f
+	Memory_onload CommandConvert,LabelConvert,FuncConvert,ExpressionConvert,IncludeConvert,InsertModule,ConvertSpeed,FileOverWrite,mreftodeffunc,insertundef
+	outx=ginfo(22)
+	outy=ginfo(23)
+	ljumpopt 0,80
+	winobj "msctls_progress32","",0,0x40000000|0x10000000|0x04000000,410,15
+	fileprogress=objinfo(stat,2)
+	winobj "msctls_progress32","",0,0x40000000|0x10000000|0x04000000,410,15
+	allprogress=objinfo(stat,2)
+	notesel hsp2list
+	sendmsg allprogress,PBM_SETRANGE32,0,noteinfo(0)
+	redraw 1
+	repeat noteinfo(0)
+	redraw 0
+	userwindowcls
+	notesel hsp2list
+	sendmsg allprogress,PBM_SETPOS,cnt+1,0
+	noteget hsp2c,cnt
+	hsp2c=getpath(hsp2f,32)+hsp2c
+	hsp3c=getpath(hsp3f,32)+WildCardMake(getpath(hsp2c,8),getpath(hsp3f,8))
+	exist hsp3c
+	if (strsize!-1)&(FileOverwrite=0):{
+		dialog "変換対象のファイルは存在します。\n上書きをしてもよろしいでしょうか。",2
+		if stat=7:fileoverwrite=1:continue:else:fileoverwrite=2
+	} else:if(strsize!-1)&(FileOverwrite=1):continue
+	redraw 1
+	exist hsp2c
+	if strsize<1:continue
+	FileConvert hsp2c,hsp3c,"",fileprogress
+	if stat=-1:break
+	loop
+	goto *W4
+	stop
+
+*W3_F
+	if hsp2="" : dialog "変換元のファイルを指定していません。\n変換元のファイルを指定してください。" :stop:else:{
+		exist hsp2
+		if strsize=-1:dialog "変換元のファイルを読み出せません。\n別のファイルを指定していただくか、ファイルが使用できるようになるまでお待ちください。":stop
+	}
+	if hsp3="" : dialog "保存先を指定していません。\n"+hsp2+".hsp というファイル名で処理を続けますか",2:{
+		if stat=6:hsp3=hsp2+".hsp":else:stop
+	} else {
+		exist hsp3
+			if (strsize!-1)&(FileOverwrite=0):{
+				dialog "保存先に指定されている\n"+hsp3+"\n というファイルは存在します。\n上書きしてもよろしいでしょうか",2
+				if stat=7:stop
+			} else:if(strsize!-1)&(FileOverwrite=1):stop
+	}
+	redraw 0
+	if Bootmode=0:ReleaseTab 3
+	clrobj 0,-1
+	ljumpopt 0,80
+	winobj "msctls_progress32","",0,0x40000000|0x10000000|0x04000000,410,22
+	fileprogress=objinfo(stat,2)
+	WindowMake "ファイル変換 - 作業中","Input  :"+hsp2+"\n	Output :"+hsp3
+	Memory_onload CommandConvert,LabelConvert,FuncConvert,ExpressionConvert,IncludeConvert,InsertModule,ConvertSpeed,FileOverWrite,mreftodeffunc,insertundef
+	redraw 1
+	FileConvert hsp2,hsp3,"",fileprogress
+	goto *W4
+	stop
+*W3_T
+	if hsp2code="":dialog "コードが存在しません。\nコードを記述してください。":stop
+	redraw 0
+	if Bootmode=0:ReleaseTab 3
+	clrobj 0,-1
+	ljumpopt 0,80
+	winobj "msctls_progress32","",0,0x40000000|0x10000000|0x04000000,410,15
+	fileprogress=objinfo(stat,2)
+	WindowMake "テキスト変換 - 作業中","Text ("+strlen(hsp2code)+" Bytes) -> temp.hsp"
+	redraw 1
+	Memory_onload CommandConvert,LabelConvert,FuncConvert,ExpressionConvert,IncludeConvert,InsertModule,ConvertSpeed,FileOverWrite,mreftodeffunc,insertundef
+	curdir=dirinfo(0)
+	cdsysdir
+	bsave "temp.hsp",hsp2code
+	FileConvert "temp.hsp","temp.hsp","",fileprogress
+	path=M_Load("HSPScriptEditor")
+	repeat strlen(path)
+	if instr(path,0,"%1")!-1:{
+		path=strmid(path,0,instr(path,0,"%1"))+dirinfo(0)+"\\temp.hsp"+strmid(path,instr(path,0,"%1")+2,strlen(path))
+	} else :break
+	loop
+	repeat strlen(path)
+	if instr(path,0,"\"\"")!-1:{
+		path=strmid(path,0,instr(path,0,"\"\""))+strmid(path,instr(path,0,"\"\"")+1,strlen(path))
+	} else :break
+	loop
+	ProgramBoot path
+	chdir curdir
+	goto *W4
+	stop
+
+*W4
+	redraw 0
+	clrobj 0,-1
+	cls 0
+	WindowMake "変換完了","変換処理が完了いたしました。"
+	Switch modesel
+	case 0
+		// ファイル変換
+		mes "変換：ファイル変換"
+		mes "HSP2:"+hsp2
+		mes "HSP3:"+hsp3
+		rjumpopt 1,90
+		button gosub "データを開く(&O)",*ResultOpen
+	swbreak
+	case 1
+		// フォルダ変換
+		mes "変換：フォルダ変換"
+		dirlist hsp2list,hsp2f
+		notesel hsp2list
+		mes "HSP2:"+hsp2f+" - "+noteinfo(0)+" Files"
+		mes "HSP3:"+hsp3f
+	swbreak
+	case 2
+		// テキスト変換
+		mes "変換：テキスト変換"
+		mes "HSP2: (Text Data)"
+	swbreak
+	swend
+	if DisableVBScript@VBScript_Convert=1:{
+		mes ""
+		mes "-- System Log --"
+		mes "ScriptControl が使用できなかったため、"
+		mes "「計算機能」と「適応条件による変換機能」は処理されませんでした。"
+	}
+	rjumpopt 0,90
+	button "次へ(&N)>",*WindowReturn
+	sendmsg objinfo (stat, 2), $F4 , $1
+	redraw 1
+	WWID=4
+	stop
+*ResultOpen
+	path=M_Load("HSPScriptEditor")
+	repeat strlen(path)
+	if instr(path,0,"%1")!-1:{
+		path=strmid(path,0,instr(path,0,"%1"))+"\""+hsp3+"\""+strmid(path,instr(path,0,"%1")+2,strlen(path))
+	} else :break
+	loop
+	repeat strlen(path)
+	if instr(path,0,"\"\"")!-1:{
+		path=strmid(path,0,instr(path,0,"\"\""))+strmid(path,instr(path,0,"\"\"")+1,strlen(path))
+	} else :break
+	loop
+	ProgramBoot path
+	return
+*W_Options
+	// w_opt_hwnd=objinfo(stat,2)
+	dim rect,4
+	GetWindowRect w_opt_hwnd,varptr (RECT)
+	TrackPopupMenu hoptions,$20,RECT(0),RECT(1),,hwnd
+	stop
+
+	//
+	// ---------------------------------------------------------------------------------
+	//
+	// 以下　共有ゾーン
+	//
+*Hotkey
+	if (ginfo(2)=10)|(ginfo(2)=-1):return
+	if wparam=112:goto *help@Window_Function
+	if WWID=0:{
+		if wparam=65:goto *M	// アドバンスドモード
+		if wparam=79:objsel 1
+		if wparam=70:objsel 2
+		if wparam=84:objsel 3
+		if wparam=78:goto *W2
+		if wparam=13:goto *W2
+		if wparam=67:goto *cancel
+	}
+	getkey ctrl,17
+	if WWID=1:{
+		if wparam=13:goto *H2LOAD
+		if ctrl=1:{
+			if wparam=79:goto *H2LOAD
+			if wparam=66:goto *W1
+			if wparam=83:goto *W3_F
+			if wparam=67:goto *cancel
+		}
+	}
+	if WWID=2:{
+		if wparam=13:goto *H2LOAD
+		if ctrl=1:{
+			if wparam=79:goto *H2FLOAD
+			if wparam=66:goto *W1
+			if wparam=83:goto *W3_D
+			if wparam=67:goto *cancel
+		}
+	}
+	if WWID=3:{
+		if wparam=13:goto *H2LOAD
+		if ctrl=1:{
+			if wparam=66:goto *W1
+			if wparam=83:goto *W3_T
+			if wparam=67:goto *cancel
+		}
+	}
+	if WWID=4:{
+		if wparam=78:goto *W1
+		if wparam=13:goto *W1
+	}
+	return
+*Cancel
+	//
+	// *CANCEL
+	//
+	// キャンセルボタンが押されたときに、終了の確認をして終了する。
+	//
+	dialog "画面を閉じて、プログラムを終了しますか？",2
+	if stat=6:PostMessage hwnd,WM_Close,0,0 // WM_Close をポストして、クローズボックスを押したときと同じ動作に。
+	return
+	
+*FINISH
+	//
+	// FINISH
+	//
+	// プログラム終了時にコールされる。
+	//　onexit の限定版ようなもの。
+	//
+	cdsysdir
+	M_fsave		// 設定ファイル保存
+	return	// ここに値を返すと、終了しない。
+	
+*H2Load
+	//
+	// H2Load
+	//
+	// 読み込み専用 (ファイル対象）
+	//
+	//dialog "as",16,"変換元 (HSP2) ソース"
+	OpenFileName "変換元 (HSP2) ソース (*.as)|*.as|テキストファイル (*.txt)|*.txt|すべてのファイル (*.*)|*.*|",""
+	if refstr!"":{
+		hsp2=refstr
+		if instr(hsp2,0,".")=-1:hsp2=hsp2+".as"
+		sendmsg hsp2hwnd,0x000C,0,varptr(hsp2)
+		hsp3=hsp2+".hsp"
+		sendmsg hsp3hwnd,0x000C,0,varptr(hsp3)
+		hsp2f=getpath(hsp2,32)+"*"+strmid(hsp2,instr(hsp2,0,"."),strlen(hsp2)-instr(hsp2,0,"."))
+		hsp3f=getpath(hsp3,32)+"*"+strmid(hsp3,instr(hsp3,0,"."),strlen(hsp3)-instr(hsp3,0,"."))
+		sendmsg hspnextb,$F4,1:sendmsg hspnextb,$F,0,0:sendmsg hsp2hwnd,$F4,0
+		sendmsg hsp2fhwnd,0x000C,0,varptR(hsp2f)
+		sendmsg hsp3fhwnd,0x000C,0,varptR(hsp3f)
+	}
+	stop
+	
+*H2Save
+	//
+	// H2Save
+	//
+	// 書き込み専用（ファイル対象）
+	//
+	//dialog "hsp",17,"変換先 (HSP3) ソース"
+	SaveFilename "変換先 (HSP3) ソース (*.hsp)|*.as|テキストファイル (*.txt)|*.txt|すべてのファイル (*.*)|*.*|",""
+	if refstr!"":{
+	hsp3=refstr
+	if instr(hsp3,0,".")=-1:hsp3=hsp3+".hsp"
+	sendmsg hsp3hwnd,0x000C,0,varptr(hsp3)
+	hsp3f=getpath(hsp3,32)+"*"+strmid(hsp3,instr(hsp3,0,"."),strlen(hsp3)-instr(hsp3,0,"."))
+	sendmsg hsp3fhwnd,0x000C,0,varptR(hsp3f)
+}
+	stop
+
+*H2FLoad
+	//
+	// H2FLoad
+	//
+	// 読みだし先ディレクトリ指定
+	//
+	OpenFileName "変換元 (HSP2) ソース (*.as)|*.as|テキストファイル (*.txt)|*.txt|すべてのファイル (*.*)|*.*|",""
+	if refstr!"":{
+		refstr_=refstr
+		hsp2f=getpath(refstr_,32)+"*"+getpath(refstr_,2):hsp2=refstr_:hsp3f=hsp2f+".hsp":hsp3=hsp2+".hsp"
+		sendmsg hsp2fhwnd,0x000C,0,varptr(hsp2f)
+		sendmsg hsp3fhwnd,0x000C,0,varptr(hsp3f)
+		sendmsg hsp2hwnd,0x000C,0,varptR(hsp2)
+		sendmsg hsp3hwnd,0x000C,0,varptR(hsp3)
+		sendmsg hspnextb,$F4,1:sendmsg hspnextb,$F,0,0:sendmsg hsp2hwnd,$F4,0
+	}
+	stop
+	
+*H2FSave
+	//
+	// H2FSave
+	//
+	// 書き込み先ディレクトリ指定
+	//
+	refstr_=getpath(hsp3f,32)
+	if refstr_="":refstr_=dirinfo(0x10000)
+	BrowseFolder "変換結果の出力先のフォルダを指定してください",refstr_
+	if refstr!"":{
+		hsp3f=refstr+"\\*.as.hsp":hsp3=""+refstr+"\\"+getpath(hsp2,8)+".hsp"
+		sendmsg hsp3fhwnd,0xc,0,varptr(hsp3f)
+		sendmsg hsp3hwnd,0x000C,0,varptR(hsp3)
+	}
+	stop
+
+*SettingToMenu
+	CheckMenuItem hconvertoptions,110,CommandConvert*8
+	CheckMenuItem hconvertoptions,111,LabelConvert*8
+	CheckMenuItem hconvertoptions,112,FuncConvert*8
+	CheckMenuItem hconvertoptions,113,ExpressionConvert*8
+	CheckMenuItem hconvertoptions,114,IncludeConvert*8
+	CheckMenuItem hconvertoptions,115,InsertModule*8
+	CheckMenuItem hconvertoptions,116,mrefTodeffunc*8
+	CheckMenuItem hconvertoptions,117,Insertundef*8
+	CheckMenuItem hwshoptions,120,UseVBScript*8
+	CheckMenuItem hwshoptions,121,RunScriptFirst*8
+	CheckMenuItem hwshoptions,122,RunScriptLast*8
+	CheckMenuRadioItem hOverwriteoption,0,2,ConvertSpeed,MF_BYPOSITION
+	CheckMenuRadioItem hOverwriteoption,0,3,FileOverwrite,MF_BYPOSITION
+	return
+
+*SettingAllSaves
+	M_SAVE "BootMode",""+bootmode
+	M_SAVE "FirstMode",""+modesel
+	M_SAVE "CommandConvert",""+CommandConvert
+	M_SAVE "LabelConvert",""+LabelConvert
+	M_SAVE "FuncConvert",""+FuncConvert
+	M_SAVE "ExpressionConvert",""+ExpressionConvert
+	M_SAVE "IncludeConvert",""+IncludeConvert
+	M_SAVE "InsertModule",""+InsertModule
+	M_SAVE "mrefTodeffunc",""+mrefTodeffunc
+	M_SAVE "Insertundef",""+Insertundef
+	M_SAVE "UseVBScript",""+UseVBScript
+	M_SAVE "RunScriptFirst",""+RunScriptFirst
+	M_Save "ConvertSpeed",""+convertSpeed
+	M_SAVE "Overwrite",""+fileoverwrite
+	return

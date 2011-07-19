@@ -1,0 +1,974 @@
+	//
+	//	Mimura Software ソースコンバータ２
+	//				開発ソース
+	//		設定エディタプロファイル
+	
+	#module Setting_EDITOR
+	#define winx 640
+	#define winy 400
+	
+	#deffunc SetupWindow str optioncode,local tbb,local tbadd
+	//
+	// SetupWindow
+	// 編集ウインドウ用のウインドウ初期化を行う。
+	//
+	// p1 - 画面名を書く
+	// p2 - 画面の説明を書く
+	//
+	callhwnd=hwnd
+	screen 10,winx,winy,4
+	SetWindowLong callhwnd,-16,getwindowlong(callhwnd,-16)|0x08000000
+	objmode 1,0
+	redraw 0
+	normalcls
+	winobj "ToolbarWindow32","",0,$50000801,0,0
+    hTool = objinfo_hwnd(stat)
+    sendmsg hTool, TB_BUTTONSTRUCTSIZE, 20, 0
+    sendmsg hTool, TB_SETEXTENDEDSTYLE, 0, TBSTYLE_EX_DRAWDDARROWS
+    savemenu = CreatePopupMenu()
+    AppendMenu savemenu, 0, 3, "保存"
+	AppendMenu savemenu, 0, 4, "エクスポート"
+    tbadd(0) = -1        ; HINST_COMMCTRL
+    tbadd(1) = 0         ; IDB_STD_SMALL_COLOR
+    sendmsg hTool, TB_ADDBITMAP, 0, varptr(tbadd)
+    tbb( 0) =  6, 1, 0x04, 0, 0  ;「新規作成」ボタン
+    tbb( 5) =  7, 2, 0x04, 0, 0          ;「開く」ボタン
+    tbb(10) =  8, 3,($8<<8)|0x04, 0, 0          ;「保存」ボタン
+    tbb(15) =  0, 0, 1<<8, 0, 0          ;「セパレータ」ボタン
+    tbb(20) =  0, 10, 0x04, 0, 0          ;「切り取り」ボタン
+    tbb(20) =  0, 10, 0x04, 0, 0          ;「切り取り」ボタン
+    tbb(25) =  1, 11, 0x04, 0, 0          ;「コピー」ボタン
+    tbb(30) =  2, 12, 0x04, 0, 0          ;「貼り付け」ボタン
+    tbb(35) =  5, 13, 0x04, 0, 0          ;「削除」ボタン
+    tbb(40) =  0, 0, 1<<8, 0, 0          ;「セパレータ」ボタン
+    tbb(45) = 10, 22, 0x04, 0, 0          ;「アドバンス編集」ボタン
+    sendmsg hTool, TB_ADDBUTTONS, 10, varptr(tbb)
+    sendmsg hTool, TB_AUTOSIZE, 0, 0
+    oncmd gosub *OnCommand, WM_COMMAND
+    oncmd gosub *OnNotify,  WM_NOTIFY
+    oncmd gosub *cl, WM_CLOSE
+    oncmd gosub *Hotkey,WM_HOTKEY
+	; ==== メニューバー ====
+
+	; 「ファイル」メニュー
+	hmenuFile = CreatePopupMenu()
+	AppendMenu hmenuFile, 0, 1, "新規作成(&N)"
+	AppendMenu hmenuFile, 0, 2, "インポート (&O)"
+	AppendMenu hmenuFile, 0, 3, "設定を保存(&S)"
+	AppendMenu hmenuFile, 0, 4, "エクスポート (&A)"
+	AppendMenu hmenuFile, $800, 0, ""
+	AppendMenu hmenuFile, 0, 20, "保存して閉じる (&X)"
+	AppendMenu hmenuFile, 0, 21, "設定を破棄して閉じる (&Q)"
+
+	; 「編集」メニュー
+	hmenuEdit = CreatePopupMenu()
+	AppendMenu hmenuEdit, 0, 10, "切り取り (&T)	Ctrl+X"
+	AppendMenu hmenuEdit, 0, 11, "コピー (&C)	Ctrl+C"
+	AppendMenu hmenuEdit, 0, 12, "貼り付け (&P)	Ctrl+V"
+	AppendMenu hmenuEdit, 0, 13, "削除 (&L)	Del"
+	AppendMenu hmenuEdit, $800, 0, ""
+	AppendMenu hmenuEdit, 0, 14, "行を挿入する (&I)	Insert"
+	
+	; 「ヘルプ」メニュー
+	
+	// ヘルプのメインメニュー
+	hmenuHelp = CreatePopupMenu()
+	AppendMenu hmenuHelp,0, 25, "トピックの検索"
+
+	; メニューバー作成
+	hmenu = CreateMenu()
+	AppendMenu hmenu, $10, hmenuFile, "ファイル(&F)"
+	AppendMenu hmenu, $10, hmenuEdit, "編集(&E)"
+	AppendMenu hmenu, $10, hmenuHelp, "ヘルプ(&H)"
+	SetMenu hwnd, hmenu
+	DrawMenuBar hwnd
+	normalcls
+	syscolor 16
+	line -1,winy/7-1,winx,winy/7-1
+	pos 40,winy/10-1
+	color 0,0,0
+	font "ＭＳ ゴシック",14,1
+	mes optioncode
+	title "Mimura Software ソースコンバータ２ "+ver+"　－　"+optioncode
+	pos winx-winx/2,winy/7-24
+	sdim searchkey,1024
+	input searchkey,200,22
+	pos winx-winx/2+202,winy/7-25
+	button gosub "検索",*Search
+	searchhwnd=objinfo(stat,2)
+	pos 0,winy/7+1
+	return
+
+	#deffunc Tolist var dat,str cdat_,int check,int Lid,int mode,local cdat,local lvi,local lvitem,local sztext,local temp,local cut
+	//
+	// ToList
+	//　変数の内容をそのままリストに入力する
+	//
+	// dat - 内容
+	// cdat_ - 区切り文字
+	// check - 一列目がチェックボックスかどうか
+	// Lid - 記入行 (オプション）
+	// mode - 動作モード
+	//  動作モード：mode = 0 - 挿入動作　（Lid 無視）
+	//				mode = 1 - 挿入動作　（Lid 有効）
+	//
+	sztext=""
+	cdat=cdat_
+	lvi = 8,0,0,2<<12,$f000
+	lvitem.0 = 0x0001          ; LVIF_TEXT
+	lvitem.2 = 0
+	lvitem.4 = -1
+	lvitem.3 = 0x0001|0x0004
+	lvitem.5 = varptr(szText)
+	notesel dat
+	repeat noteinfo(0)
+	noteget temp,cnt
+	if mode=0:lvitem.1 = cnt:else:lvitem.1=lid+cnt
+	sztext=""
+	cut=0
+	if strmid(temp,0,1)=";":temp=strmid(temp,1,strlen(temp)-1):cut=1
+	if strmid(temp,0,2)="//":temp=strmid(temp,2,strlen(temp)-2):cut=1
+	lvitem.2=0:sendmsg listview,LVM_INSERTITEM,0,varptr(lvitem):lvi.1=stat
+	if cut=0:sendmsg listview,LVM_SETITEM,cnt,varptr(lvi)
+	repeat
+	if temp="":break
+	getstr sztext,temp,0,peek(cdat,0)
+	temp=strmid(temp,strsize,strlen(temp)-strsize)
+	if check=1:lvitem.2=cnt+1:else:lvitem.2=cnt
+	sendmsg listview,LVM_SETITEM,0,varptr(lvitem)
+	loop
+	loop
+	return
+
+	#deffunc ListToData var data,str cdat,int check,local ccount,local LVITEM,local psztext,local linetext
+	//
+	// ListToData
+	//　リストの内容をそのまま変数に起こす
+	//
+	// data - 取得変数
+	// cdat - 区切り文字
+	// check - 一列目がチェックボックスかどうか
+	//
+	sdim psztext,1024*10
+	sendmsg listview,LVM_GETHEADER,0,0
+	sendmsg stat,HDM_GETITEMCOUNT,0,0
+	ccount=stat
+	if check=1:ccount=ccount-1
+	LVITEM.0=0x0001
+	LVITEM.5=varptr(psztext)
+	LVITEM.6=1024*10
+	sendmsg listview,LVM_GETITEMCOUNT,0,0
+	sdim data,1024
+	notesel data
+	repeat stat
+	linetext=""
+	LVITEM.1=cnt
+	sendmsg listview,4140,cnt,61440
+	if ((stat>>12)-1)=0:linetext="//"
+	repeat ccount
+	if check=1:LVITEM.2=cnt+1:else:LVITEM.2=cnt
+	sendmsg listview,LVM_GETITEM,0,varptr(LVITEM)
+	if cnt=0:linetext=""+linetext+""+psztext:else:linetext=linetext+""+cdat+""+psztext
+	loop
+	noteadd linetext
+	loop
+	return
+	
+	#deffunc Command_edit local curdir,local dat,local sztext,local lvcolumn,local rect,local temp,local cut,local cnt2,local lvi
+	//
+	// Command_Edit
+	//
+	// 命令変換定義ファイル編集専用エディタ
+	//
+	dim rect,4
+	SetupWindow "命令定義データエディタ"
+	GetClientRect hwnd,varptr(rect)
+	winobj "SysListView32","",0,0x5401000D,rect.2,rect.3-ginfo(23)
+	listview=objinfo(stat,2)
+	sendmsg listview,0x1037,0,0
+	sendmsg listview,0x1036,0,stat|$00000400|$00000001|$00000020|0x00000004|0x00000100
+	curdir=dirinfo(0)
+	cdsysdir
+	cpsload "Command",dat
+	chdir curdir
+	sdim szText, 256
+    lvcolumn.0 = 0x000F
+    lvcolumn.3 = varptr(szText)
+    lvcolumn.4 = 0
+    lvcolumn.5 = 0
+    szText = "有効"		// チェックのラベル名を入力
+    lvcolumn.2 = int(M_load("ListCheckSize"))
+    sendmsg listview,0x101B,0,varptr(lvcolumn)
+    lvcolumn.2 = int(M_load("ListCommand1"))
+    szText = "旧コード (HSP2)"		// 一番目のラベル名を入力
+    sendmsg listview,0x101B,1,varptr(lvcolumn)
+    // 二つ目
+    lvcolumn.2 = int(M_load("ListCommand2"))
+    sztext = "新コード (HSP3)"
+	sendmsg listview,0x101B,2,varptr(lvcolumn)
+	// 三つ目
+    lvcolumn.2 = int(M_load("ListCommand3"))
+    sztext = "適用条件"
+	sendmsg listview,0x101B,3,varptr(lvcolumn)
+	// 四つ目
+    lvcolumn.2 = int(M_load("ListCommand4"))
+    sztext = "コメント"
+	sendmsg listview,0x101B,4,varptr(lvcolumn)
+	Tolist dat,"	",1
+	redraw 1
+	mode=1 // コマンド変換定義
+	return
+
+	#deffunc Label_edit local curdir,local dat,local sztext,local lvcolumn,local rect,local temp,local cut,local cnt2,local lvi
+	//
+	// Label_Edit
+	//
+	// ラベル修正定義ファイル編集専用エディタ
+	//
+	dim rect,4
+	SetupWindow "ラベル修正定義データエディタ"
+	GetClientRect hwnd,varptr(rect)
+	winobj "SysListView32","",0,0x5401000D,rect.2,rect.3-ginfo(23)
+	listview=objinfo(stat,2)
+	sendmsg listview,0x1037,0,0
+	sendmsg listview,0x1036,0,stat|$00000400|$00000001|$00000020|0x00000004|0x00000100
+	curdir=dirinfo(0)
+	cdsysdir
+	cpsload "Label",dat
+	chdir curdir
+	sdim szText, 256
+    lvcolumn.0 = 0x000F
+    lvcolumn.3 = varptr(szText)
+    lvcolumn.4 = 0
+    lvcolumn.5 = 0
+    szText = "有効"		// チェックのラベル名を入力
+    lvcolumn.2 = int(M_load("ListCheckSize"))
+    sendmsg listview,0x101B,0,varptr(lvcolumn)
+    lvcolumn.2 = int(M_load("ListLabel1"))
+    szText = "対象となる命令"		// 一番目のラベル名を入力
+    sendmsg listview,0x101B,1,varptr(lvcolumn)
+    // 二つ目
+    lvcolumn.2 = int(M_load("ListLabel2"))
+    sztext = "対象の引数番号"
+	sendmsg listview,0x101B,2,varptr(lvcolumn)
+	Tolist dat," ",1
+	redraw 1
+	mode=2 // ラベル修正
+	return
+
+	#deffunc Software_edit local curdir,local dat,local sztext,local lvcolumn,local rect,local temp,local cut,local cnt2,local lvi
+	//
+	// Software_Edit
+	//
+	// ソフト設定ファイル編集専用エディタ
+	//
+	dim rect,4
+	SetupWindow "ソフトウェア設定ファイルエディタ"
+	GetClientRect hwnd,varptr(rect)
+	winobj "SysListView32","",0,0x5401000D,rect.2,rect.3-ginfo(23)
+	listview=objinfo(stat,2)
+	sendmsg listview,0x1037,0,0
+	sendmsg listview,0x1036,0,stat|$00000400|$00000001|$00000020|0x00000100
+	curdir=dirinfo(0)
+	cdsysdir
+	cpsload "Main",dat
+	chdir curdir
+	sdim szText, 256
+    lvcolumn.0 = 0x000F
+    lvcolumn.3 = varptr(szText)
+    lvcolumn.4 = 0
+    lvcolumn.5 = 0
+    szText = "項目名"		// 一番目のラベル名を入力
+    lvcolumn.2 = int(M_load("ListMain1"))
+    sendmsg listview,0x101B,0,varptr(lvcolumn)
+    lvcolumn.2 = int(M_load("ListMain2"))
+    szText = "値"		// 二番目のラベル名を入力
+    sendmsg listview,0x101B,1,varptr(lvcolumn)
+	Tolist dat,"=",0
+	redraw 1
+	mode=4 // プログラム設定ファイル修正
+	return
+
+	#deffunc Module_Edit local rect,local dat,local curdir
+	//
+	// Module_Edit
+	//
+	// モジュールファイル編集専用エディタ
+	//
+	dim rect,4
+	SetupWindow "ユーザーモジュールエディタ"
+	GetClientRect hwnd,varptr(rect)
+	curdir=dirinfo(0)
+	cdsysdir
+	sdim dat,1024*20
+	cpsload "Insert",dat
+	chdir curdir
+	//mesbox dat,rect.2,rect.3-ginfo(23)
+	//listview=objinfo(stat,2)
+	winobj "EDIT",dat,0,$10000000|$00000004|$40000000|0x00200000|0x00100000,rect.2,rect.3-ginfo(23)
+	listview=objinfo(stat,2)
+	sendmsg listview,WM_SETFONT,GetStockObject(17),0
+	sendmsg listview,EM_SETLIMITTEXT,0,0
+	redraw 1
+	mode=3 // モジュールファイル
+	return
+
+	#deffunc WSHModule_Edit local rect,local dat,local curdir
+	//
+	// Module_Edit
+	//
+	// モジュールファイル編集専用エディタ
+	//
+	dim rect,4
+	SetupWindow "VBScript エディタ"
+	GetClientRect hwnd,varptr(rect)
+	curdir=dirinfo(0)
+	cdsysdir
+	sdim dat,1024*20
+	cpsload "WSHM",dat
+	chdir curdir
+	//mesbox dat,rect.2,rect.3-ginfo(23)
+	winobj "EDIT",dat,0,$10000000|$00000004|$40000000|0x00200000|0x00100000,rect.2,rect.3-ginfo(23)
+	listview=objinfo(stat,2)
+	sendmsg listview,WM_SETFONT,GetStockObject(17),0
+	sendmsg listview,EM_SETLIMITTEXT,0,0
+	redraw 1
+	mode=5 // モジュールファイル
+	return
+
+	// 以下雑用命令集
+	
+	#deffunc Setting_out local outname,local curdir,local dat
+		//
+		// 設定を保存する
+		//
+		if mode=1:ListToData dat,"	",1:curdir=dirinfo(0):cdsysdir:cpssave "Command",dat,1:outname=refstr:chdir curdir
+		if mode=2:ListToData dat," ",1:curdir=dirinfo(0):cdsysdir:cpssave "Label",dat,1:outname=refstr:chdir curdir
+		if mode=3|mode=5:{
+		sendmsg listview,WM_GETTEXTLENGTH,0,0
+		sdim dat,stat+10:sendmsg listview,WM_GETTEXT,stat+10,varptr(dat)
+		curdir=dirinfo(0)
+		cdsysdir
+		if mode=3:cpssave "Insert",dat,1
+		if mode=5:cpssave "WSHM",dat,1
+		outname=refstr
+		chdir curdir
+		}
+		if mode=4:ListToData dat,"=",0:curdir=dirinfo(0):cdsysdir:cpssave "Main",dat,1:outname=refstr:notesel dat:noteload "Main_Data.dat":m_lslocal dat:chdir curdir
+	return outname
+	
+	#deffunc Setting_Close int ch,local header,local headerrect
+	//
+	// ウインドウを閉じる
+	//
+	UnregisterHotKey hwnd,1
+	UnregisterHotKey hwnd,2
+	UnregisterHotKey hwnd,3
+	UnregisterHotKey hwnd,4
+	gsel 10,-1
+	SetWindowLong callhwnd,-16,getwindowlong(callhwnd,-16)-0x08000000
+	gsel 0,0
+	count=0
+	if ch=0:Setting_Out
+	if mode=1|mode=2|mode=4:{
+		sendmsg listview,LVM_GETHEADER,0,0
+		header=stat
+		dim headerrect,4
+		if mode=1:{
+			repeat 5
+			sendmsg header,HDM_GETITEMRECT,cnt,varptr(headerrect)
+			if cnt=0:M_save "ListCheckSize",""+(headerrect(2)-headerrect(0)):else:M_save "ListCommand"+cnt,""+(headerrect(2)-headerrect(0))
+			loop
+		}
+		if mode=2:{
+			repeat 3
+			sendmsg header,HDM_GETITEMRECT,cnt,varptr(headerrect)
+			if cnt=0:M_save "ListCheckSize",""+(headerrect(2)-headerrect(0)):else:M_save "ListLabel"+cnt,""+(headerrect(2)-headerrect(0))
+			loop
+		}
+		if mode=4:{
+			repeat 2
+			sendmsg header,HDM_GETITEMRECT,cnt,varptr(headerrect)
+			M_save "ListMain"+(cnt+1),""+(headerrect(2)-headerrect(0))
+			loop
+		}
+	}
+	return
+	
+	#deffunc Setting_New
+	//
+	// 内容の初期化
+	//
+	if (mode=1|mode=2|mode=4):sendmsg listview,LVM_DELETEALLITEMS,0,0
+	if mode=3|mode=5:sendmsg listview,WM_SETTEXT,0,0
+	return
+
+	#deffunc Setting_List_Import str pass,str cdat,int check,local dat,local dat2,local temp
+	//
+	// リストのファイルのインポート
+	//
+	exist pass
+	if strsize>0:{
+	notesel dat
+	noteload pass
+	ListToData dat2,cdat,check
+	CharLower varptr(dat2)
+	notesel dat
+	repeat noteinfo(0)
+	notesel dat
+	noteget temp,cnt
+	if instr(dat2,0,getpath(temp,16))=-1:ToList temp,cdat,check
+	loop
+	}
+	return
+
+	#deffunc Setting_T_Write str pass,local dat
+	//
+	// ファイル名を指定して、メッセージボックス内の内容を、そのまま書き出す
+	//
+		sendmsg listview,WM_GETTEXTLENGTH,0,0
+		sdim dat,stat+10:sendmsg listview,WM_GETTEXT,stat+10,varptr(dat)
+		notesel dat:notesave pass
+	return
+	
+	#deffunc Setting_L_Write str pass,str cdat,int check,local dat
+	//
+	// ファイル名を指定して、リスト内の内容をそのまま書き出す
+	//
+	ListToData dat,cdat,check
+	notesel dat
+	notesave pass
+	return
+	
+	#deffunc Setting_T_Paste str pass,local dat,local temp
+	//
+	// ファイル名を指定して、その内容をメッセージボックス内に反映させる
+	//
+	exist pass
+	if strsize>0:{
+		notesel temp
+		noteload pass
+		sendmsg listview,WM_SETTEXT,0,varptr(dat)
+	}
+	return
+	
+	#deffunc Setting_L_Paste str pass,str cdat,int check,local dat
+	//
+	// ファイル名を指定して、その内容をリスト内に反映させる
+	//
+	exist pass
+	if strsize>0:{
+		notesel dat
+		noteload pass
+		Setting_New
+		ToList dat,cdat,check
+	}
+	return
+
+	#deffunc Setting_Advanced_Mode local dat2,local pass,local dat,local curdir
+	//
+	// アドバンスド編集モードへの移行処理
+	//　（めんどくさいので浮かせてみた。）
+	dat2=""
+	dat2=M_Load("AdvancedEditor")
+	Setting_Out
+	pass=refstr
+	if instr(dat2,0,"%1")!-1:dat2=strmid(dat2,0,instr(dat2,0,"%1"))+"\""+refstr+"\""+strmid(dat2,instr(dat2,0,"%1")+2,strlen(dat2)):else:dat2=dat2+" \""+outname+"\""
+	PassCompiler dat2
+	WaitBoot dat2
+	Setting_New
+	curdir=dirinfo(0)
+	cdsysdir
+	if mode=1:cpsload "Command",dat:ToList dat,"	",1
+	if mode=2:cpsload "Label",dat:ToList dat," ",1
+	if mode=3:cpsload "Insert",dat:sendmsg listview,WM_SETTEXT,0,varptr(dat)
+	if mode=4:cpsload "Main",dat:ToList dat,"=",0
+	if mode=5:cpsload "WSHM",dat:sendmsg listview,WM_SETTEXT,0,varptr(dat)
+	chdir curdir
+	return
+
+	#deffunc Setting_EditAction_Delete local LVITEM
+	if mode=1|mode=2|mode=4:{
+		if list_editcontrol!0:{
+			// 編集中
+			sendmsg list_editcontrol,WM_CUT,0,0
+			return
+		}
+	sendmsg listview,LVM_GETNEXTITEM,-1,LVNI_SELECTED
+	LVITEM=0x8,stat,0,0x2|0x1,0x2|0x1
+	sendmsg listview,LVM_DELETEITEM,stat,0
+	sendmsg listview,LVM_SETITEM,0,varptr(LVITEM)
+}
+	if mode=3|mode=5:sendmsg listview,WM_CUT,0,0
+	return
+
+	#deffunc Setting_EditAction_Copy local dat,local hmem,local dat2
+	if mode=1|mode=2|mode=4:{
+		if list_editcontrol!0:{
+			// 編集中
+			sendmsg list_editcontrol,WM_COPY,0,0
+			return
+		}
+	if mode=1:ListToData dat,"	",1
+	if mode=2:ListToData dat," ",1
+	if mode=4:ListToData dat,"=",0
+	notesel dat
+	sendmsg listview,LVM_GETNEXTITEM,-1,LVNI_SELECTED
+	noteget dat2,stat
+	hmem=GlobalAlloc(GHND,strlen(dat2)+1)
+	lstrcpy GlobalLock(hMem),varptr(dat2)
+	GlobalUnLock hMem
+	OpenClipBoard hwnd
+	EmptyClipBoard
+	SetClipBoardData CF_TEXT,hmem
+	CloseClipBoard
+}
+	if mode=3|mode=5:sendmsg listview,WM_COPY,0,0
+	return
+
+	#deffunc Setting_EditAction_Paste local hmem,local dat,local result,local LVITEM
+	if mode=1|mode=2|mode=4:{
+		if list_editcontrol!0:{
+			// 編集中
+			sendmsg list_editcontrol,WM_PASTE,0,0
+			return
+		}
+	sdim dat,1024
+	OpenClipBoard hwnd
+	result = 0
+	repeat CountClipboardFormats()
+		EnumClipboardFormats 0
+		if stat=CF_TEXT:result = 1:break
+	loop
+	if result=0:CloseClipboard:return // データがなければ中断
+	hmem=GetClipboardData(CF_TEXT)
+	sdim dat,GlobalSize(hmem)+1
+	lstrcpy varptr(dat),GlobalLock(hmem)
+	GlobalUnlock hmem
+	CloseClipBoard
+	sendmsg listview,LVM_GETNEXTITEM,-1,LVNI_SELECTED
+	LVITEM=0x8,stat,0,0x2|0x1,0x2|0x1
+	if mode=1:ToList dat,"	",1,stat,1
+	if mode=2:ToList dat," ",1,stat,1
+	if mode=4:ToList dat,"=",0,stat,1
+	sendmsg listview,LVM_SETITEM,0,varptr(LVITEM)
+}
+	if mode=3|mode=5:sendmsg listview,WM_PASTE,0,0
+	return
+
+	#deffunc ListFindSelect local temp,local onget,local LVITEM,local selid,local dat
+	if mode=1:ListToData dat,"	",1
+	if mode=2:ListToData dat," ",1
+	if mode=4:ListToData dat,"=",0
+	CharLower varptr(dat)
+	notesel dat
+	sendmsg listview,LVM_GETNEXTITEM,-1,LVNI_SELECTED
+	selid=stat+1
+	//title ""+selid
+	onget=-1
+	repeat 2
+	if (noteinfo(0)-selid)<1:selid=0
+	repeat noteinfo(0)-selid,selid
+	noteget temp,cnt
+	if instr(temp,0,getpath(searchkey,16))!-1:onget=cnt:break
+	loop
+	if onget!-1:break
+	selid=0
+	if instr(dat,0,getpath(searchkey,16))!-1:continue
+	break
+	loop
+	if onget!-1:{
+		LVITEM=0x8,onget,0,0x2|0x1,0x2|0x1
+		sendmsg listview,LVM_SETITEM,0,varptr(LVITEM)
+		SetFocus listview
+	}
+	return
+	// ここまで
+	
+	// リストビュー編集
+	#deffunc ListViewEditEnd local LVITEM,local sztext,local MENUITEMINFO
+	//
+	// 編集の終了をどこでもできるように、それだけ浮かせてみる。
+	//
+	if list_editcontrol=0:return
+	sdim sztext,1024*5
+	LVITEM.0=0x0001
+	LVITEM.1=selitem
+	LVITEM.2=selline
+	LVITEM.5=varptr(sztext)
+	LVITEM.6=1024*5
+	sendmsg list_editcontrol,WM_GETTEXT,1024*5,varptr(sztext)
+	sendmsg listview,LVM_SETITEM,0,varptr(LVITEM)
+	//
+	// オブジェクト有効化
+	//
+	// メニューバー
+	dim MENUITEMINFO,12
+	MENUITEMINFO=48,0x1
+	SetMenuItemInfo hmenu,0,1,varptr(MENUITEMINFO)
+	SetMenuItemInfo hmenu,2,1,varptr(MENUITEMINFO)
+	DrawMenuBar hwnd
+	// ツールバー
+	sendmsg hTool,TB_ENABLEBUTTON,1,1
+	sendmsg hTool,TB_ENABLEBUTTON,2,1
+	sendmsg hTool,TB_ENABLEBUTTON,3,1
+	sendmsg hTool,TB_ENABLEBUTTON,22,1
+	// 検索
+	EnableWindow searchhwnd,1
+
+	//
+	// 設定の無効化
+	//
+	DestroyWindow list_editcontrol
+	list_editcontrol=0
+	count=0
+	UnregisterHotKey hwnd,1
+	UnregisterHotKey hwnd,2
+	UnregisterHotKey hwnd,3
+	UnregisterHotKey hwnd,4
+	return
+	
+	#deffunc ListViewEdit int cut,local posmouse,local MENUITEMINFO,local psztext,local rcitem,local m_nedit,local headerhwnd,local headerrect,local lvitem
+	count=count+1
+	dim posmouse,2 // POINT 構造体・・みたいなもの。
+	GetCursorPos varptr(posmouse)
+	ScreenToClient listview,varptr(posmouse)
+	dim headerrect,4
+	dim rcItem,4 // RECT構造体みたいなもん
+	rcItem(0)=LVIR_LABEL
+	sendmsg listview,LVM_GETNEXTITEM,-1,LVNI_SELECTED
+	sendmsg listview,LVM_GETITEMRECT,stat,varptr(rcitem)
+	sendmsg listview,LVM_GETHEADER,0,0
+	headerhwnd=stat
+	// スクロールにあわせてずらす
+	posmouse(0)=posmouse(0)+GetScrollPos(listview,0)
+	// マウスの座標と列番号を比較
+	m_nEdit=-1
+	sendmsg headerhwnd,HDM_GETITEMRECT,0,varptr(headerrect)
+	repeat
+	if PtInRect(varptr(rcItem),posmouse(0),posmouse(1))!0:m_nEdit=cnt:break
+	sendmsg headerhwnd,HDM_GETITEMRECT,cnt+1,varptr(headerrect)
+	if stat=0:break
+	rcItem(0)=headerrect(0):rcItem(2)=headerrect(2)
+	loop
+	if m_nedit=-1:return
+	// チェックボックスは外す
+	if (mode=1|mode=2)&m_nedit=0:return
+	sendmsg listview,LVM_GETNEXTITEM,-1,LVNI_SELECTED
+	if ((count=2)&(selitem=stat)&(m_nedit=selline)&((TimeGetTime()-ListSelTime)<int(M_Load("ListSelTimeout"))))|(cut=1):{
+	sdim sztext,1024*5
+	sendmsg listview,LVM_GETNEXTITEM,-1,LVNI_SELECTED
+	selitem=stat
+	selline=m_nedit
+	sztext = ""
+	LVITEM.0=0x0001
+	LVITEM.1=selitem
+	LVITEM.2=selline
+	LVITEM.5=varptr(sztext)
+	LVITEM.6=1024*5
+	rcitem(0)=rcitem(0)-GetScrollPos(listview,0):rcitem(2)=rcitem(2)-GetScrollPos(listview,0)
+	sendmsg listview,LVM_GETITEM,0,varptr(LVITEM)
+	CreateWindowEx 0x00000008,"EDIT",""+sztext,0x40000000|0x10000000|0x04000000|ES_AUTOHSCROLL,rcitem(0)+2,rcitem(1)+2,rcitem(2)-rcitem(0)-4,rcitem(3)-rcitem(1)-4,listview,0,0,0
+	list_editcontrol=stat
+	sendmsg listview,WM_GETFONT,0,0
+	sendmsg list_editcontrol,WM_SETFONT,stat,1
+	//
+	// 一時的に使用不可能なメニューを無効化する
+	//
+	// メニュー
+	redraw 1
+	dim MENUITEMINFO,12
+	MENUITEMINFO=48,0x1,0,0x3
+	SetMenuItemInfo hmenu,0,1,varptr(MENUITEMINFO)
+	SetMenuItemInfo hmenu,2,1,varptr(MENUITEMINFO)
+	DrawMenuBar hwnd
+	// ツールバー
+	sendmsg hTool,TB_ENABLEBUTTON,1,0
+	sendmsg hTool,TB_ENABLEBUTTON,2,0
+	sendmsg hTool,TB_ENABLEBUTTON,3,0
+	sendmsg hTool,TB_ENABLEBUTTON,22,0
+	// 検索
+	EnableWindow searchhwnd,0
+
+	//
+	// 必要な設定を行う
+	//
+	SetFocus list_editcontrol	// フォーカスをあわせる
+	RegisterHotKey hwnd,1,0,13	// エンターキーをフック
+	RegisterHotKey hwnd,2,0,9	// TABキーをフック
+	RegisterHotKey hwnd,3,0,38	// 上キーをフック
+	RegisterHotKey hwnd,4,0,40	// 下キーをフック
+	
+	} else:count=1
+	if count=3:ListViewEditEnd:count=1
+	if count=1:ListSelTime=TimeGetTime():sendmsg listview,LVM_GETNEXTITEM,-1,LVNI_SELECTED:selitem=stat:selline=m_nedit
+	return
+
+	#deffunc Setting_EditAction_Insert int intsw,local LVITEM,local getid,local rect2,local header,local nulltext,local rcitem,local setitem,local headerrect,local POINT
+	//
+	// リストに新しく行を追加する
+	//  intsw = -1 最終行に追加
+	//　それ以外は現在位置に追加
+	//
+	ListViewEditEnd
+	dim rcitem,4:dim headerrect,4
+	if intsw=-1:{
+		sendmsg listview,LVM_GETITEMCOUNT,0,0:setitem=stat
+	} else {
+		sendmsg listview,LVM_GETNEXTITEM,-1,LVNI_SELECTED
+		if stat!-1:setitem=stat+1:else:sendmsg listview,LVM_GETITEMCOUNT,0,0:setitem=stat
+	}
+	nulltext=""
+	LVITEM.0=0x1|0x8,setitem,0,0x1|0x2,-1,varptr(nulltext),0
+	sendmsg listview,LVM_INSERTITEM,0,varptr(LVITEM)
+	getid=stat
+	sendmsg listview,LVM_GETITEMRECT,getid,varptr(rcitem)
+	sendmsg listview,LVM_GETHEADER,0,0
+	header=stat
+	if mode=1|mode=2:setitem=1:else:setitem=0
+	sendmsg header,HDM_GETITEMRECT,setitem,varptr(headerrect)
+	dim rect2,4
+	GetWindowRect listview,varptr(RECT2)
+	if (rcitem(3)>((rect2(3)-rect2(1))-(rcitem(3)-rcitem(1))))|(rcitem(1)<headerrect(3)):{
+		sendmsg listview,LVM_SCROLL,0,rcitem(3)-GetScrollPos(listview,1)
+		sendmsg listview,LVM_GETITEMRECT,getid,varptr(rcitem)
+	}
+	//headerrect.0=headerrect.0-GetScrollPos(listview,0):headerrect.2=headerrect.2-GetScrollPos(listview,0)
+	if (GetScrollPos(listview,0)>headerrect.0):sendmsg listview,LVM_SCROLL,headerrect.0-GetScrollPos(listview,0)
+	sendmsg header,HDM_GETITEMRECT,setitem,varptr(headerrect)
+	headerrect.0=headerrect.0-GetScrollPos(listview,0):headerrect.2=headerrect.2-GetScrollPos(listview,0)
+	rcitem.0=headerrect.0:rcitem.2=headerrect.2
+	dim point,2
+	point=(rcitem(0)+rcitem(2))/2,(rcitem(1)+rcitem(3))/2
+	ClientToScreen listview,varptr(point)
+	SetCursorPos point(0),point(1)
+	ListViewEdit 1
+	return
+
+	#deffunc Setting_AutoInsertCheck local posmouse,local rcitem,local LVITEM
+	dim rcitem,4
+	sendmsg listview,LVM_GETITEMCOUNT,0,0
+	sendmsg listview,LVM_GETITEMRECT,stat-1,varptr(rcitem)
+	dim posmouse,2
+	GetCursorPos varptr(posmouse)
+	ScreenToClient listview,varptr(posmouse)
+	if posmouse(1)>rcitem(3):{
+		// 行を追加
+		Setting_EditAction_Insert -1
+	} else :ListViewEdit 1
+	return
+
+	#deffunc ListSel int hotkeyid,local headerhwnd,local rect,local lrect,local point,local rect2,local lvitem
+	if hotkeyid=1:ListViewEditEnd	// Enter
+	if hotkeyid=2:{
+		// TAB Key
+		ListViewEditEnd
+		sendmsg listview,LVM_GETHEADER,0,0
+		headerhwnd=stat
+		selline=selline+1
+		sendmsg headerhwnd,HDM_GETITEMCOUNT,0,0
+		if selline>=stat:selline=0
+		dim rect,4:dim lrect,4:dim rect2,4
+		sendmsg headerhwnd,HDM_GETITEMRECT,selline,varptr(lrect)
+		GetWindowRect listview,varptr(RECT2)
+		if (lrect(0)<rect2(0))|(lrect(2)>rect2(2)):sendmsg listview,LVM_SCROLL,lrect(0)-GetScrollPos(listview,0)
+		sendmsg headerhwnd,HDM_GETITEMRECT,selline,varptr(lrect)
+		lrect.0=lrect.0-GetScrollPos(listview,0):lrect.2=lrect.2-GetScrollPos(listview,0)
+		sendmsg listview,LVM_GETITEMRECT,selitem,varptr(rect)
+		point=(lrect(0)+lrect(2))/2,(rect(1)+rect(3))/2
+		ClientToScreen listview,varptr(point)
+		SetCursorPos point(0),point(1)
+		ListViewEdit 1
+	}
+	if hotkeyid=3:{
+		// ↑キー
+		ListViewEditEnd
+		sendmsg listview,LVM_GETHEADER,0,0
+		headerhwnd=stat
+		selitem=selitem-1
+		if selitem=-1:selitem=0
+		dim rect,4:dim lrect,4
+		sendmsg headerhwnd,HDM_GETITEMRECT,selline,varptr(lrect)
+		sendmsg listview,LVM_GETITEMRECT,selitem,varptr(rect)
+		if rect(1)<lrect(3):sendmsg listview,LVM_SCROLL,0,rect(1)-rect(3)
+		sendmsg headerhwnd,HDM_GETITEMRECT,selline,varptr(lrect)
+		lrect.0=lrect.0-GetScrollPos(listview,0):lrect.2=lrect.2-GetScrollPos(listview,0)
+		sendmsg listview,LVM_GETITEMRECT,selitem,varptr(rect)
+		point=(lrect(0)+lrect(2))/2,(rect(1)+rect(3))/2
+		ClientToScreen listview,varptr(point)
+		SetCursorPos point(0),point(1)
+		lvitem=0x8,selitem,0,0x1|0x2,0x2|0x1
+		sendmsg listview,LVM_SETITEM,0,varptr(lvitem)
+		ListViewEdit 1
+	}
+	if hotkeyid=4:{
+		// ↓キー
+		ListViewEditEnd
+		sendmsg listview,LVM_GETHEADER,0,0
+		headerhwnd=stat
+		selitem=selitem+1
+		sendmsg listview,LVM_GETITEMCOUNT,0,0
+		if selitem>=stat:selitem=stat-1
+		dim rect,4:dim lrect,4:dim rect2,4
+		sendmsg headerhwnd,HDM_GETITEMRECT,selline,varptr(lrect)
+		sendmsg listview,LVM_GETITEMRECT,selitem,varptr(rect)
+		GetWindowRect listview,varptr(RECT2)
+		if rect(3)>((rect2.3-rect2.1)-(rect.3-rect.1)):sendmsg listview,LVM_SCROLL,0,rect(3)-rect(1)
+		sendmsg headerhwnd,HDM_GETITEMRECT,selline,varptr(lrect)
+		lrect.0=lrect.0-GetScrollPos(listview,0):lrect.2=lrect.2-GetScrollPos(listview,0)
+		sendmsg listview,LVM_GETITEMRECT,selitem,varptr(rect)
+		point=(lrect(0)+lrect(2))/2,(rect(1)+rect(3))/2
+		ClientToScreen listview,varptr(point)
+		SetCursorPos point(0),point(1)
+		lvitem=0x8,selitem,0,0x1|0x2,0x2|0x1
+		sendmsg listview,LVM_SETITEM,0,varptr(lvitem)
+		ListViewEdit 1
+	}
+	return
+	
+*HotKey
+	if ginfo(2)=10:return
+	ListSel wparam
+	return
+	
+*search
+	if searchkey="":dialog "検索文字列を入力してください":return
+	if mode=1|mode=2|mode=4:ListFindSelect
+	if mode=3|mode=5:TextFindSelect listview,searchkey
+	if stat=-1:dialog "最後まで検索しました"
+	if stat=-2:dialog "致命的なエラーにより、検索機能は使用できません\n\n技術情報:\nエラー：Editコントロールを作成できませんでした"
+	return
+*cl
+	Setting_Close
+	return 0
+*OnCommand
+	menuid=wparam& $FFFF
+	switch menuid
+	case 1
+	// 新規作成
+	ListViewEditEnd
+	dialog "データが削除されますがよろしいですか？\n削除されたデータは復元することができません。",3
+	if stat=6:Setting_New
+	swbreak
+	case 2
+	// インポート
+		ListViewEditEnd
+		if mode=1:dialog "scc",16,"命令変換定義データ":Setting_List_Import refstr,"	",1
+		if mode=2:dialog "scl",16,"ラベル修正定義データ":Setting_List_Import refstr," ",1
+		if mode=3:dialog "as;*.hsp",16,"HSP Source":Setting_T_Paste refstr
+		if mode=4:dialog "ini",16,"ソフトウェア設定ファイル":Setting_L_Paste refstr,"=",0
+		if mode=5:dialog "vbss",16,"VB Script For SC2":Setting_T_Paste refstr
+	swbreak
+	case 3
+	// 保存
+		ListViewEditEnd
+		Setting_out
+	swbreak
+	case 4
+	// エクスポート
+		ListViewEditEnd
+		if mode=1:dialog "scc",17,"命令変換定義データ":if refstr!"":Setting_L_Write refstr,"	",1
+		if mode=2:dialog "scl",17,"ラベル修正定義データ":if refstr!"":Setting_L_Write refstr," ",1
+		if mode=4:dialog "ini",17,"ソフトウェア設定ファイル":if refstr!"":Setting_L_Write refstr,"=",0
+		if mode=3:dialog "as;*.hsp",16,"HSP Source":if refstr!"":Setting_T_Write refstr
+		if mode=5:dialog "vbss",16,"VB Script for SC2":if refstr!"":Setting_T_Write refstr
+	swbreak
+	// 編集関連
+
+	case 10
+	// 切り取り
+		Setting_EditAction_Copy
+		Setting_EditAction_Delete
+	swbreak
+	case 11
+	// コピー
+		Setting_EditAction_Copy
+	swbreak
+	case 12
+	// 貼り付け
+		Setting_EditAction_Paste
+	swbreak
+	case 13
+	// 削除
+		Setting_EditAction_Delete
+	swbreak
+	case 14
+	// 行の挿入
+		Setting_EditAction_Insert
+	swbreak
+	
+	case 22
+	// アドバンスド編集
+		ListViewEditEnd
+		Setting_Advanced_Mode // 浮かせ関数をそのままたたくという不健康さ。
+	swbreak
+
+	// 終了関連
+		
+	case 20
+	// 閉じる
+		ListViewEditEnd
+		Setting_Close
+	swbreak
+	case 21
+	// 閉じる
+		ListViewEditEnd
+		Setting_Close 1
+	swbreak
+
+	// ヘルプ関連
+	case 25	// トピックの検索
+		ListViewEditEnd
+		cdexedir:exec "SC2.chm",16
+	swbreak
+	swend
+	return
+*OnNotify
+    dupptr nmhdr, lParam, 12
+    if (nmhdr(0) == listview) && (nmhdr(2)=NM_RCLICK):ListViewEditEnd:TrackPopupMenuEx hmenuedit,0,ginfo(0),ginfo(1),hwnd
+    if (nmhdr(0) == listview) && (nmhdr(2)=NM_CLICK):ListViewEditEnd:ListViewEdit 0
+    if (nmhdr(0) == listview) && (nmhdr(2)=NM_DBLCLK):Setting_AutoInsertCheck
+    if (nmhdr(2)=LVN_KEYDOWN):gosub *ListKeyConfig
+    if (nmhdr(0) == hTool) && (nmhdr(2) == TBN_DROPDOWN) :gosub *OnToolDropDown
+    return
+*ListKeyConfig
+	//
+	// リストビュー上でのショートカットキー
+	//
+	dupptr lv_Keydown,lparam,12+8
+	getkey ctrl,17
+	switch lpeek(lv_keydown,14)
+	case 339
+	 // 削除
+	 Setting_EditAction_Delete
+	swbreak
+	case 45
+	// 切り取り
+		if ctrl=1 : Setting_EditAction_Copy : Setting_EditAction_Delete
+	swbreak
+	case 46
+	// コピー
+		if ctrl=1:Setting_EditAction_Copy
+	swbreak
+	case 47
+	// 貼り付け
+		if ctrl=1:Setting_EditAction_Paste
+	swbreak
+	case 338
+	// 挿入
+		Setting_EditAction_Insert
+	swbreak
+	swend
+	return
+*OnToolDropDown
+    dupptr nmtoolbar, lParam, 44
+    itemId = nmtoolbar(3)
+    if (itemId == 3) {
+        dim rc, 4
+        sendmsg hTool, TB_GETRECT, itemId, varptr(rc)
+        pt = rc(0), rc(3)
+        ClientToScreen hTool, varptr(pt)
+        TrackPopupMenuEx savemenu, 0, pt(0), pt(1), hwnd, 0
+    }
+    return
+	#global

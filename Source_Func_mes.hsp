@@ -1,0 +1,176 @@
+	//
+	//	Mimura Software ソースコンバータ２
+	//				開発ソース
+	//		API / ウインドウメッセージ 関連のライブラリ
+	
+	#uselib "shell32"
+	#define global ShellExecute ShellExecuteA
+	#func global ShellExecuteA "ShellExecuteA" sptr,sptr,sptr,sptr,sptr,sptr
+	#func global FindExecutable "FindExecutableA" sptr,sptr,int
+	#func global ExtractIconEx "ExtractIconEx" sptr,sptr,sptr,sptr,sptr
+	#cfunc global SHBrowseForFolder "SHBrowseForFolderA" int
+	#func global SHGetPathFromIDList "SHGetPathFromIDListA" int,int
+	#uselib "kernel32"
+	#func global Sleep "Sleep" sptr
+	#func global lstrcpy "lstrcpy" sptr,sptr
+	#cfunc global GlobalAlloc			"GlobalAlloc"		int,int
+	#cfunc global GlobalLock			"GlobalLock"		int
+	#func  global GlobalUnlock			"GlobalUnlock"		int
+	#func  global GlobalFree			"GlobalFree"		int
+	#cfunc global GlobalSize "GlobalSize" sptr
+	#func global CloseHandle "CloseHandle" sptr
+	#func global WaitForSingleObject "WaitForSingleObject" sptr,sptr
+	#define global CreateProcess CreateProcessA
+	#func global CreateProcessA "CreateProcessA" sptr,sptr,sptr,sptr,sptr,sptr,sptr,sptr,sptr,sptr
+	#func global GetLongPathName "GetLongPathNameA" sptr,int,int
+	#func global GetModuleFileNameA "GetModuleFileNameA" sptr,sptr,sptr
+	#func global VirtualProtect "VirtualProtect" var,int,int,var
+	#uselib "user32"
+	#func global CheckMenuRadioItem "CheckMenuRadioItem" sptr,sptr,sptr,sptr,sptr
+	#func global RegisterHotKey "RegisterHotKey" int,int,int,int
+	#func global UnregisterHotKey "UnregisterHotKey" int,int
+	#func global SetCursorPos "SetCursorPos" sptr,sptr
+	#define global SetMenuItemInfo SetMenuItemInfoA
+	#func global SetMenuItemInfoA "SetMenuItemInfoA" sptr,sptr,sptr,sptr
+	#define global PostMessage PostMessageA
+	#func global PostMessageA "PostMessageA" sptr,sptr,sptr,sptr
+	#cfunc global GetScrollPos "GetScrollPos" int,int
+	#func global SetScrollPos "SetScrollPos" sptr,sptr,sptr,sptr
+	#func global GetFocus "GetFocus"
+	#func global SetFocus "SetFocus" sptr
+	#cfunc global PtInRect "PtInRect" sptr,int,int
+	#func global ScreenToClient "ScreenToClient" int,int
+	#func global GetCursorPos "GetCursorPos" int
+	#func global EnableWindow "EnableWindow" int,int
+	#func global DestroyWindow "DestroyWindow" sptr
+	#define global CharLower CharLowerA
+	#func global CharLowerA "CharLowerA" sptr
+	#define global CreateWindowEx CreateWindowExA
+	#func global CreateWindowExA "CreateWindowExA" sptr,sptr,sptr,sptr,sptr,sptr,sptr,sptr,sptr,sptr,sptr,sptr
+	#func global EnumClipboardFormats "EnumClipboardFormats" sptr
+	#cfunc global CountClipboardFormats "CountClipboardFormats"
+	#func global OpenClipboard		"OpenClipboard"		int
+	#func global EmptyClipboard		"EmptyClipboard"
+	#cfunc global GetClipboardData		"GetClipboardData"	int
+	#func global SetClipboardData		"SetClipboardData"	int,int
+	#func global CloseClipboard		"CloseClipboard"
+	#func global TrackPopupMenuEx   "TrackPopupMenuEx"   int,int,int,int,int,int
+	#func global ClientToScreen     "ClientToScreen"     int,int
+	#func global CheckMenuItem "CheckMenuItem" int, int, int
+	#cfunc global CreatePopupMenu "CreatePopupMenu"
+	#func global AppendMenu "AppendMenuA" int, int, int, str
+	#func global TrackPopupMenu "TrackPopupMenu" int, int, int, int, int, int
+	#func global DestroyMenu "DestroyMenu" int
+	#func global GetWindowRect "GetWindowRect" int, int
+	#func global SendMessage "SendMessageA" int,int,int,int
+	#func global GetClientRect "GetClientRect" int, int
+	#func global SetWindowLong "SetWindowLongA" int, int, int
+	#cfunc global GetWindowLong "GetWindowLongA" int, int
+	#func global SetParent "SetParent" int, int
+	#func global DrawIconEx "DrawIconEx" sptr,sptr,sptr,sptr,sptr,sptr,sptr,sptr,sptr
+	#cfunc global CreateMenu     "CreateMenu"
+	#func global SetMenu        "SetMenu"         int,int
+	#func global DrawMenuBar    "DrawMenuBar"     int
+	#uselib "gdi32"
+	#cfunc global GetStockObject "GetStockObject" int
+	#uselib "ole32"
+	#func global CoTaskMemFree "CoTaskMemFree" int
+	#uselib "comdlg32"
+	#func global GetOpenFileName "GetOpenFileNameA" int
+	#func global GetSaveFileName "GetSaveFileNameA" int
+	#uselib "ADVAPI32.DLL"
+	#define global RegOpenKeyEx RegOpenKeyExA
+	#func global RegOpenKeyExA "RegOpenKeyExA" sptr,sptr,sptr,sptr,sptr
+	#func global RegCloseKey "RegCloseKey" sptr
+	#define global RegLoadKey RegLoadKeyA
+	#func global RegLoadKeyA "RegLoadKeyA" sptr,sptr,sptr
+	#define global RegQueryValueEx RegQueryValueExA
+	#func global RegQueryValueExA "RegQueryValueExA" sptr,sptr,sptr,sptr,sptr,sptr	
+	#uselib "winmm"
+	#cfunc global Timegettime "timeGetTime"
+	#uselib "comctl32"
+	#func InitCommonControls "InitCommonControls"
+
+	#define global ctype MAKEWORD(%1,%2) (%1&0xFF|(%2<<8&0xFF00))
+	#define global xdim(%1,%2) dim %1,%2: VirtualProtect %1,%2*4,$40,x@_xdim
+
+    #define global WM_NOTIFY           0x004E
+    #define global TBN_DROPDOWN        -710
+    #define global TB_BUTTONSTRUCTSIZE 0x041E
+    #define global TB_ADDBITMAP        0x0413
+    #define global TB_AUTOSIZE         0x0421
+    #define global TB_ADDBUTTONS       0x0414
+    #define global TB_SETEXTENDEDSTYLE 0x0454
+    #define global TB_GETRECT          0x0433
+    #define global LVM_INSERTCOLUMN    0x101B
+    #define global LVM_INSERTITEM    0x1007
+    #define global LVM_SETITEM    0x1006
+    #define global WM_COMMAND      0x0111
+	#define global WM_MENUSELECT   0x011F
+	#define global SB_SETPARTS     0x0404
+	#define global SB_SETTEXT      0x0401
+	#define global SB_SIMPLE       0x0409
+	#define global SB_SIMPLEID     255
+	#define global SBT_NOBORDERS   0x0100
+	#define global MF_POPUP           0x0010
+    #define global MF_SEPARATOR       0x0800
+    #define global TBSTYLE_EX_DRAWDDARROWS  1
+    #define  global LVM_DELETEALLITEMS    0x1009
+    #define  global WM_SETTEXT    0x000C
+    #define  global WM_GETTEXTLENGTH    0x000E
+    #define  global WM_GETTEXT    0x000D
+    #define global LVM_GETITEMCOUNT   0x1004
+    #define global LVM_GETHEADER      0x101F
+    #define global HDM_GETITEMCOUNT	$00001200
+    #define global LVM_GETITEM    0x1005
+    #define global HKEY_CLASSES_ROOT	$80000000
+    #define global KEY_READ $00020019
+    #define global SW_RESTORE	$00000009
+    #define global SW_SHOW	$00000005
+	#define global SW_SHOWDEFAULT	$0000000A
+	#define global SW_SHOWNORMAL	$00000001
+	#define global LVM_GETHOTITEM	$0000103D
+	#define global LVM_GETNEXTITEM	$0000100C
+	#define global LVNI_SELECTED	$00000002
+	#define global LVM_DELETEITEM	$00001008
+	#define global EM_SETLIMITTEXT	$000000C5
+	#define global WM_CUT	$00000300
+	#define global LVN_KEYDOWN	$FFFFFF65
+	#define global WM_COPY	$00000301
+	#define global CF_TEXT	$00000001
+	#define global GHND	$00000042
+	#define global WM_PASTE	$00000302
+	#define global LVM_FINDITEM    0x100D
+	#define global WM_SETFOCUS	$00000007
+	#define global WM_KEYDOWN      0x0100
+	#define global NM_RCLICK	$FFFFFFFB
+	#define global NM_CLICK	$FFFFFFFE
+	#define global LVN_BEGINLABELEDIT	$FFFFFF97
+	#define global LVN_ENDLABELEDIT	$FFFFFF96
+	#define global LVCF_WIDTH	$00000002
+	#define global LVIR_LABEL	$00000002
+	#define global LVM_GETITEMRECT	$0000100E
+	#define glboal LVM_GETCOLUMN	$00001019
+	#define global LVM_GETCOLUMNWIDTH	$0000101D
+	#define global HDM_GETITEMRECT	$00001207
+	#define global NM_DBLCLK	$FFFFFFFD
+	#define global WM_SETFONT	$00000030
+	#define global WM_GETFONT    0x0031
+	#define global NM_KILLFOCUS	$FFFFFFF8
+	#define global WM_VSCROLL	$00000115
+	#define global WM_HSCROLL	$00000114
+	#define global WM_CLOSE	$00000010
+	#define global WM_PAINT	$0000000F
+	#define global TB_ENABLEBUTTON    0x0401
+	#define global WM_HOTKEY	$00000312
+	#define global LVM_SCROLL	$00001014
+	#define global LVM_GETVIEWRECT	$00001022
+	#define global MF_BYPOSITION	$00000400
+	#define global PBM_SETRANGE32	$00000406
+	#define global PBM_SETPOS	$00000402
+	#define gloval WS_VISIBLE	$10000000
+	#define global ES_MULTILINE	$00000004
+	#define global WS_CHILD	$40000000
+	#define global ES_AUTOHSCROLL	$00000080
+
+	InitCommonControls
